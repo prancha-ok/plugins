@@ -23,13 +23,18 @@ confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
 
 1. Baixe a extensão: [prancha-ok-autocad-0.2.0.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.2.0.mcpb)
    (ou em [pranchaok.com.br/autocad](https://pranchaok.com.br/autocad)).
-2. Dê dois cliques no arquivo (ou arraste para a janela do Claude Desktop) e clique em
-   **"Instalar"** ("Install", se o seu Claude estiver em inglês). Não precisa instalar
-   Python: o Claude Desktop cuida disso. Se ele avisar que a extensão não é verificada, é
-   esperado: ela vem do site do Prancha Ok, não do diretório da Anthropic. Confirme só com
-   o arquivo baixado do site. Não abriu? Vá em Configurações > Extensões > Configurações
-   avançadas > Instalar extensão (Settings > Extensions > Advanced settings > Install
-   Extension) e escolha o arquivo.
+2. Instale por dentro do Claude Desktop (não pela pasta de downloads: o Windows não conhece
+   esse tipo de arquivo e pergunta com qual programa abrir). Clique no seu nome, no canto
+   inferior esquerdo, e em "Configurações" (Settings); na coluna da esquerda, em "Este
+   computador" (This computer), clique em "Extensões" (o caminho todo é Configurações >
+   Extensões (Settings > Extensions)). Arraste o arquivo baixado para a área "Arraste
+   arquivos .MCPB ou .DXT aqui para instalar" ("Drag .MCPB or .DXT files here to install")
+   e clique em "Instalar" (Install). Prefere escolher o arquivo? Na mesma tela, vá em
+   Configurações avançadas > Instalar extensão (Advanced settings > Install Extension). Se
+   o Windows perguntar "Como você deseja abrir este arquivo?", feche essa janela sem
+   escolher programa e faça como acima. Não precisa instalar Python: o Claude Desktop
+   cuida disso. Se ele avisar que a extensão não é verificada, é esperado: ela vem do site
+   do Prancha Ok, não do diretório da Anthropic. Confirme só com o arquivo baixado do site.
 3. Abra o AutoCAD com uma prancha e peça no Claude: **"conecte ao Prancha Ok"**. Na
    primeira vez o Claude Desktop baixa o que o conector precisa, e ele leva alguns minutos
    para ficar pronto. Se o Claude disser que não acha o Prancha Ok, espere um ou dois
