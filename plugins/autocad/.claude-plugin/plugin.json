@@ -1,0 +1,20 @@
+{
+  "name": "autocad",
+  "version": "0.2.0",
+  "description": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção.",
+  "author": {
+    "name": "Prancha Ok",
+    "url": "https://pranchaok.com.br"
+  },
+  "homepage": "https://pranchaok.com.br/autocad",
+  "repository": "https://github.com/prancha-ok/plugins",
+  "keywords": [
+    "autocad",
+    "arquitetura",
+    "prancha",
+    "parecer",
+    "legalização",
+    "prefeitura"
+  ],
+  "displayName": "Prancha Ok para AutoCAD"
+}

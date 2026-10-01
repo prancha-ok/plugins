@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "prancha-ok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/server",
+        "src/servidor_mcp.py"
+      ]
+    }
+  }
+}

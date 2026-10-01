@@ -1,0 +1,45 @@
+{
+  "name": "autocad",
+  "version": "0.2.0",
+  "description": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção.",
+  "author": {
+    "name": "Prancha Ok",
+    "url": "https://pranchaok.com.br"
+  },
+  "homepage": "https://pranchaok.com.br/autocad",
+  "repository": "https://github.com/prancha-ok/plugins",
+  "keywords": [
+    "autocad",
+    "arquitetura",
+    "prancha",
+    "parecer",
+    "legalização",
+    "prefeitura"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "prancha-ok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "src/servidor_mcp.py"
+      ],
+      "cwd": "./server"
+    }
+  },
+  "interface": {
+    "displayName": "Prancha Ok para AutoCAD",
+    "shortDescription": "Parecer do Prancha Ok marcado no desenho do AutoCAD",
+    "longDescription": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção. Nunca altera o que o arquiteto desenhou.",
+    "developerName": "Prancha Ok",
+    "category": "Productivity",
+    "websiteURL": "https://pranchaok.com.br/autocad",
+    "defaultPrompt": [
+      "Conecte ao Prancha Ok",
+      "Envie esta prancha para o Prancha Ok e marque os erros"
+    ],
+    "brandColor": "#C4301C",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  }
+}

@@ -1,0 +1,31 @@
+[project]
+name = "prancha-ok-autocad"
+version = "0.2.0"
+description = "MCP do Prancha Ok para o AutoCAD: envia a prancha, lê o parecer e marca os itens no desenho"
+readme = "INSTALAR.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.1,<2.0",
+    "httpx>=0.27",
+    "keyring>=25",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.scripts]
+prancha-ok-autocad = "prancha_ok_autocad.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prancha_ok_autocad"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Mesmo conjunto do motor (services/engine): erros de verdade, imports e sintaxe moderna.
+# As ferramentas do MCP pegam qualquer exceção de propósito: o assistente mostra o motivo
+# e o servidor continua de pé.
+select = ["F", "B", "E9", "W6", "UP", "I"]

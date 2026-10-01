@@ -1,0 +1,20 @@
+{
+  "name": "prancha-ok",
+  "interface": {
+    "displayName": "Prancha Ok"
+  },
+  "plugins": [
+    {
+      "name": "autocad",
+      "source": {
+        "source": "local",
+        "path": "./plugins/autocad"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

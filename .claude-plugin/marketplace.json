@@ -1,0 +1,15 @@
+{
+  "name": "prancha-ok",
+  "owner": {
+    "name": "Prancha Ok",
+    "url": "https://pranchaok.com.br"
+  },
+  "description": "Plugins do Prancha Ok: conferência de pranchas de arquitetura no AutoCAD.",
+  "plugins": [
+    {
+      "name": "autocad",
+      "source": "./plugins/autocad",
+      "description": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção."
+    }
+  ]
+}
