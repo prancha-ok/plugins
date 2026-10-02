@@ -95,12 +95,16 @@ def _armazenar(projeto_id: str, conteudo: bytes, tipo: str) -> str:
 
 
 def enviar_prancha(projeto_id: str, arquivo: Path, leitura: dict | None = None,
-                   compartilhar_prancha: bool = False) -> dict:
-    """Envia a prancha (e, se houver, a leitura do AutoCAD: { produto, versaoAcad,
-    versaoLisp, entidades }) e abre o parecer: {parecerId, numero, url}."""
+                   compartilhar_prancha: bool = False, respostas: dict[str, float] | None = None) -> dict:
+    """Envia a prancha, DWG ou DXF (e, se houver, a leitura do AutoCAD, só com DWG: { produto,
+    versaoAcad, versaoLisp, entidades }) e abre o parecer: {parecerId, numero, url}.
+    `respostas`: as medidas que o responsável técnico confirmou ({campo: número}), que entram
+    já neste parecer."""
     corpo: dict = {"projetoId": projeto_id, "storageId": _armazenar(projeto_id, arquivo.read_bytes(),
                                                                     "application/octet-stream"),
                    "nomeArquivo": arquivo.name}
+    if respostas:
+        corpo["respostas"] = respostas
     if leitura is not None:
         corpo["leitura"] = {
             "storageId": _armazenar(projeto_id, json.dumps(leitura, ensure_ascii=False).encode("utf-8"),
@@ -121,3 +125,12 @@ def responder(parecer_id: str, dados: dict, dispensas: list[dict]) -> dict:
     """Respostas às dúvidas (como o formulário da web): parecer novo {parecerId, numero, url}."""
     return _autenticado("POST", f"/cliente/v1/pareceres/{parecer_id}/respostas",
                         json={"dados": dados, "dispensas": dispensas})
+
+
+def sugestao(texto: str, parecer_id: str | None, itens: list[dict]) -> dict:
+    """Sugestão da conversa para a equipe do Prancha Ok (relato "sugestao"): {relatoId}.
+    `itens`: [{ordem, comentario}] do parecer `parecer_id`."""
+    corpo: dict = {"texto": texto, "itens": itens}
+    if parecer_id:
+        corpo["parecerId"] = parecer_id
+    return _autenticado("POST", "/cliente/v1/sugestoes", json=corpo)

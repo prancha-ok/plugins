@@ -12,6 +12,13 @@ Lugar de uma linha, nesta ordem (contrato, 4.2):
   3. a região com caixa (nuvem em volta da caixa) ou só com o título (nuvem em volta dele);
   4. nada: só o quadro-resumo. A região só com tipo e rótulo diz onde olhar, mas não é lugar.
 
+Resposta do responsável na web (rodada 4b; a rota manda `marca` em cada item desde a 0.3.1 do
+backend, e o MCP antigo ignora): o item que ele conferiu ("sim"), contestou ("discordo") ou marcou
+"não se aplica" não ganha nuvem nem linha no quadro; o "não" conta como desacordo (vermelho); o
+"corrigido" continua desacordo até a prancha nova. O quadro diz quanto falta para fechar
+(`contaDoResponsavel`) e, fechada a análise na web, "aprovado pelo responsável". Nada disso vira
+"atendido pelo Prancha Ok".
+
 Nada aqui fala com o AutoCAD: servidor.marcar_parecer manda as marcas (autocad.py) e devolve
 a medida (quantas linhas apresentadas têm lugar e quantas viraram nuvem).
 """
@@ -40,6 +47,24 @@ MAXIMO_LINHAS_QUADRO = 60
 MAXIMO_TEXTO_QUADRO = 110
 # O sentinela que o Convex usa para o lugar que não vem de um campo (cliente.ts).
 LUGAR_DO_ITEM = "desenho"
+# Respostas do responsável na web que resolvem o item (convex/lib/conferencias.ts): sem nuvem.
+RESOLVIDO_PELO_RESPONSAVEL = ("sim", "discordo", "nao_se_aplica")
+
+
+def escolha_do_responsavel(item: dict) -> str | None:
+    """A resposta do responsável no item (`marca.escolha` da rota), ou None (sem marca, ou rota antiga)."""
+    marca = item.get("marca")
+    escolha = marca.get("escolha") if isinstance(marca, dict) else None
+    return escolha if isinstance(escolha, str) else None
+
+
+def resolvido_pelo_responsavel(item: dict) -> bool:
+    return escolha_do_responsavel(item) in RESOLVIDO_PELO_RESPONSAVEL
+
+
+def situacao_apresentada(item: dict) -> str | None:
+    """A situação na nuvem: a do motor, menos o "não" do responsável, que é desacordo."""
+    return "errado" if escolha_do_responsavel(item) == "nao" else item.get("situacao")
 
 
 @dataclass
@@ -103,11 +128,33 @@ def regiao_achada(regiao) -> dict | None:
             "rotulo": str(regiao.get("rotulo") or regiao.get("tipo") or "região")}
 
 
+def com_lugar_medido(p: dict, medidas: dict | None) -> dict:
+    """O parecer com o lugar das medidas confirmadas antes do envio (`medir_prancha`, 0.3.0).
+    O backend não dá handle para o valor informado (o lugar no desenho não vale mais); quando o
+    valor informado é o que o MCP mediu, o lugar é o de onde ele saiu. `medidas`:
+    {campo: {valor, handles}} gravado no envio. Valor diferente (o terreno do RGI venceu a
+    medida, ou a pessoa respondeu outro) fica sem lugar."""
+    if not medidas:
+        return p
+    itens = []
+    for item in p.get("itens") or []:
+        lugares = []
+        for lugar in item.get("lugares") or []:
+            medida = medidas.get(lugar.get("campo")) if lugar.get("informado") and not lugar.get("handles") else None
+            valor = lugar.get("valor")
+            if (isinstance(medida, dict) and isinstance(valor, (int, float)) and not isinstance(valor, bool)
+                    and abs(float(valor) - float(medida.get("valor", math.nan))) < 0.005):
+                lugar = {**lugar, "handles": [str(h) for h in medida.get("handles") or []]}
+            lugares.append(lugar)
+        itens.append({**item, "lugares": lugares})
+    return {**p, "itens": itens}
+
+
 def linha_do_item(item: dict) -> Linha:
     regiao = item.get("regiao") if isinstance(item.get("regiao"), dict) else None
     return Linha(
         numero=item["ordem"] + 1,
-        situacao=item["situacao"],
+        situacao=situacao_apresentada(item),
         titulo=str(item.get("titulo") or item["texto"]),
         texto=item["texto"],
         handles=handles_do_item(item),
@@ -119,8 +166,24 @@ def linha_do_item(item: dict) -> Linha:
 
 
 def linhas_apresentadas(p: dict, situacoes) -> list[Linha]:
-    """As linhas do parecer nas situações pedidas, na ordem do parecer."""
-    return [linha_do_item(i) for i in p.get("itens") or [] if i.get("situacao") in situacoes]
+    """As linhas do parecer nas situações pedidas, na ordem do parecer, menos as que o responsável
+    já resolveu na web (conferiu, contestou ou marcou "não se aplica")."""
+    return [linha_do_item(i) for i in p.get("itens") or []
+            if situacao_apresentada(i) in situacoes and not resolvido_pelo_responsavel(i)]
+
+
+def linha_da_conta(conta) -> str | None:
+    """O que a conta do responsável (feita na web) diz no quadro: quanto falta para fechar, ou que
+    ele fechou a análise. None sem a conta (backend antigo, parecer sem resultado)."""
+    if not isinstance(conta, dict) or not isinstance(conta.get("faltam"), int):
+        return None
+    if conta.get("statusDoResponsavel") == "aprovado_pelo_responsavel":
+        return "APROVADO PELO RESPONSÁVEL (análise fechada no Prancha Ok)"
+    resolvidos = conta.get("resolvidos") or {}
+    decididos = sum(v for k, v in resolvidos.items() if k != "peloPrancha" and isinstance(v, int))
+    decididos += conta.get("naoSeAplicaPorVoce") or 0
+    return (f"faltam {conta['faltam']} para fechar"
+            + (f"; {decididos} respondidos pelo responsável, sem nuvem" if decididos else ""))
 
 
 def pior(situacoes) -> str:
@@ -243,6 +306,8 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
     perguntas = perguntas_abertas(linhas, rotulos)
     cabecalho = [f"PRANCHA OK - PARECER Nº {p['numero']} - {situacao_parecer.upper()}",
                  f"regras {p['versaoRegras']} - camada PRANCHAOK-PARECER (não plota)"]
+    if conta := linha_da_conta(p.get("contaDoResponsavel")):
+        cabecalho.append(conta)
     if presentes:
         cabecalho.append("nuvens: " + ", ".join(NOME_COR[s] for s in presentes))
     com_nuvem = sum(1 for linha in linhas if linha.numero in marcados)

@@ -1,6 +1,6 @@
 ---
 name: prancha-ok
-description: Confere a prancha aberta no AutoCAD com o Prancha Ok e marca no desenho o que o parecer apontou. Use quando a pessoa pedir para conectar ao Prancha Ok, enviar ou conferir a prancha, ver ou marcar o parecer, ir até um item, responder as dúvidas e perguntas do parecer ou limpar as marcas.
+description: Confere a prancha aberta no AutoCAD com o Prancha Ok e marca no desenho o que o parecer apontou. Use quando a pessoa pedir para conectar ao Prancha Ok, medir, enviar ou conferir a prancha, ver ou marcar o parecer, ir até um item, responder as dúvidas e perguntas do parecer, mandar uma crítica ao Prancha Ok ou limpar as marcas.
 ---
 
 # Prancha Ok no AutoCAD
@@ -20,8 +20,9 @@ simples, sem termos de programação.
 - **Salvar** o desenho só com o "sim" da pessoa, perguntado uma vez.
 - **Compartilhar a prancha** com a equipe do Prancha Ok só com permissão explícita,
   perguntada uma vez.
-- **Valor gravado é declarado pela pessoa.** Você pode medir e propor; só grave depois que
-  ela confirmar.
+- **Valor enviado é declarado pela pessoa.** `medir_prancha` só propõe; envie só o que ela
+  confirmar ou corrigir.
+- **Críticas vão com o ok dela.** `enviar_sugestao` só quando a pessoa quiser mandar.
 
 ## O fluxo, sempre nesta ordem
 
@@ -33,24 +34,40 @@ simples, sem termos de programação.
    `vincular_projeto`. Projeto novo se cria no site: se a lista vier vazia (ou a prancha é de
    uma obra que ainda não está lá), diga à pessoa para entrar em pranchaok.com.br/app, clicar
    em "Novo projeto" e avisar quando terminar; então chame `listar_projetos` de novo.
-3. **Enviar a prancha salva.** Chame `enviar_prancha`. Ele envia o arquivo como está salvo no
-   disco. Se o desenho tem alteração não salva, pergunte se pode salvar e, com o sim, chame
-   `enviar_prancha` com `salvar=true`.
-4. **Ver o parecer.** Diga a situação e, em poucas linhas, o que está em desacordo, as dúvidas
+3. **Medir antes de enviar.** Chame `medir_prancha`. Mostre a proposta numa lista curta: cada
+   valor, a unidade e o "como" (ex.: "Área do terreno: 360,00 m², contorno do lote"). Diga
+   também o que não deu para medir (`naoMedido`) e, se houver, onde o quadro diverge do
+   desenho (`divergencias`: a pessoa escolhe um dos dois). Pergunte: "Estão certos? Corrija o
+   que precisar." Se vier aviso de unidade, pergunte a unidade do desenho e meça de novo.
+4. **Enviar com as medidas confirmadas.** Chame `enviar_prancha` com
+   `respostas={campo: valor}` só com os valores que a pessoa confirmou ou corrigiu (número,
+   sem unidade). Eles entram já no primeiro parecer. O envio usa o arquivo salvo, DWG ou DXF;
+   se há alteração não salva, pergunte se pode salvar e, com o sim, use `salvar=true`.
+5. **Ver o parecer.** Diga a situação e, em poucas linhas, o que está em desacordo, as dúvidas
    e as perguntas. Se ainda estiver processando, chame `ver_parecer` com `aguardar=true`.
-   Para a lista inteira, `ver_parecer` com `detalhe=true`.
-5. **Marcar no desenho.** Chame `marcar_parecer`. Ele põe uma nuvem numerada em cada item que
+   Para a lista inteira, `ver_parecer` com `detalhe=true`. O que o responsável já respondeu no
+   site vem em `responsavel` (quanto falta para fechar, os desacordos que ele contestou): é dele,
+   nunca diga que o Prancha Ok conferiu.
+6. **Marcar no desenho.** Chame `marcar_parecer`. Ele põe uma nuvem numerada em cada item que
    tem lugar na prancha (vermelho: em desacordo; laranja: dúvida; magenta: pergunta; azul:
-   conferir à mão) e um quadro-resumo ao lado. Diga quantos itens ficaram marcados.
-6. **Ir até o item.** Quando a pessoa perguntar de um item ("me leva no 3"), chame
+   conferir à mão) e um quadro-resumo ao lado, com quanto falta para fechar. O que o responsável
+   resolveu no site não ganha nuvem. Diga quantos itens ficaram marcados.
+7. **Ir até o item.** Quando a pessoa perguntar de um item ("me leva no 3"), chame
    `ir_para_item` com o número que o parecer e as nuvens mostram.
-7. **Responder as dúvidas e as perguntas.** Dúvida é informação que a prancha não deu;
+8. **Responder as dúvidas e as perguntas.** Dúvida é informação que a prancha não deu;
    pergunta é o que só a pessoa sabe (há terraplenagem? corte de árvore?). Pergunte a ela.
-   Quando der para medir no desenho (afastamento, área, altura), use `ler_desenho` (cotas e
-   polilinhas), proponha o valor e peça confirmação. Grave com `responder_itens`: números em
-   metros ou m², sem unidade; opções como "sim", "não" ou "não se aplica". Ele gera um parecer
-   novo; mostre o que mudou e marque de novo (passo 5).
-8. **Depois que o arquiteto corrigir**, volte ao passo 3.
+   Para medir outra coisa no desenho, use `ler_desenho` (cotas e polilinhas), proponha o
+   valor e peça confirmação. Grave com `responder_itens`: números em metros ou m², sem
+   unidade; opções como "sim", "não" ou "não se aplica". Ele gera um parecer novo; mostre o
+   que mudou e marque de novo (passo 6).
+9. **Depois que o arquiteto corrigir**, volte ao passo 3 (meça de novo: o desenho mudou).
+
+## Críticas e falsos apontamentos
+
+Se a pessoa disser que um item está errado (apontou o que não existe, faltou apontar algo,
+uma medida saiu errada), pergunte se ela quer mandar isso ao Prancha Ok e, com o sim, chame
+`enviar_sugestao` com um resumo nas palavras dela e, se for de itens, `itens=[{item,
+comentario}]` com o número do item. A equipe lê cada uma.
 
 ## Prancha não reconhecida
 
@@ -68,4 +85,4 @@ e o quadro-resumo da camada PRANCHAOK-PARECER e não mexe em mais nada.
 
 Chame `diagnosticar` e explique o que ele mostrou. O caso mais comum é o AutoCAD fechado,
 minimizado ou com uma caixa de diálogo aberta. No GstarCAD, BricsCAD, ZWCAD e outros
-compatíveis o conector não funciona: a pessoa envia o DWG pelo site.
+compatíveis o conector não funciona: a pessoa envia o desenho pelo site.
