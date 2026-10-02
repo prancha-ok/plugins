@@ -8,7 +8,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from . import __version__, autocad, backend, instalacao, marcas, medidas
+from . import __version__, atualizacao, autocad, backend, instalacao, marcas, medidas
 from .autocad import AutocadIndisponivel
 from .backend import ErroBackend, NaoConectado
 from .locais import api, empacotado, gravar_estado, ler_estado, nome_maquina, pasta, pasta_ipc, pasta_lisp
@@ -69,6 +69,15 @@ def _erro(e: Exception) -> dict:
 
 # ---------------------------------------------------------------- conexão
 
+def _com_aviso_de_versao() -> dict:
+    """{"atualizacao": {versao, mensagem}} quando o site tem versão mais nova; {} senão (ou se falhar)."""
+    try:
+        aviso = atualizacao.aviso()
+    except Exception:
+        aviso = None
+    return {"atualizacao": aviso} if aviso else {}
+
+
 @mcp.tool()
 def conectar() -> dict:
     """Liga este computador à conta do Prancha Ok. Abre o navegador: a pessoa confere o código
@@ -77,7 +86,7 @@ def conectar() -> dict:
     try:
         if backend.token():
             try:
-                return {"ok": True, "conectado": True, **backend.eu()}
+                return {"ok": True, "conectado": True, **backend.eu(), **_com_aviso_de_versao()}
             except NaoConectado:
                 backend.esquecer_token()
         pedido = ler_estado().get("pedido")
@@ -97,7 +106,7 @@ def conectar() -> dict:
             if "token" in resposta:
                 backend.guardar_token(resposta["token"])
                 gravar_estado(pedido=None)
-                return {"ok": True, "conectado": True, **backend.eu()}
+                return {"ok": True, "conectado": True, **backend.eu(), **_com_aviso_de_versao()}
             time.sleep(2)
         return {
             "ok": True,
@@ -153,6 +162,7 @@ def status() -> dict:
         saida["conexao"] = backend.eu()
     except Exception as e:
         saida["conexao"] = {"erro": str(e)}
+    saida.update(_com_aviso_de_versao())
     return saida
 
 

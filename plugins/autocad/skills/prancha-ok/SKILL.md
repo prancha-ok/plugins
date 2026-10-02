@@ -26,6 +26,9 @@ simples, sem termos de programação.
 
 ## O fluxo, sempre nesta ordem
 
+0. **Versão nova.** Se `status` ou `conectar` trouxer `atualizacao`, diga à pessoa, uma vez na
+   conversa e em poucas palavras, a `atualizacao.mensagem` (há versão nova do conector e como
+   instalar por cima). Depois siga normalmente.
 1. **Conectar** (uma vez por computador). Chame `status`. Se não houver conexão, chame
    `conectar`: o navegador abre, a pessoa confere o código, escolhe a empresa e aprova. Se
    voltar `conectado: false`, espere ela aprovar e chame `conectar` de novo.
