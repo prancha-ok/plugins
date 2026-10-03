@@ -57,10 +57,12 @@ simples, sem termos de programação.
 6. **Marcar no desenho.** O parecer pronto já vem marcado (`marcas` no resultado do envio e do
    `responder_itens`); `marcar_parecer` marca de novo. Ele põe uma nuvem numerada em cada item que
    tem lugar na prancha (vermelho: em desacordo; laranja: dúvida; magenta: pergunta; azul:
-   conferir à mão) e um quadro-resumo ao lado, com quanto falta para fechar. O que o responsável
-   resolveu no site não ganha nuvem. Diga quantos itens ficaram marcados.
+   conferir à mão) e um quadro-resumo ao lado, com quanto falta para fechar. No carimbo, no quadro
+   de áreas e onde as nuvens se amontoariam, o item ganha uma seta até uma chamada "[nº] SITUAÇÃO"
+   numa coluna ao lado, em vez da nuvem (o título dele está no quadro-resumo). O que o responsável
+   resolveu no site não ganha marca. Diga quantos itens ficaram marcados.
 7. **Ir até o item.** Quando a pessoa perguntar de um item ("me leva no 3"), chame
-   `ir_para_item` com o número que o parecer e as nuvens mostram.
+   `ir_para_item` com o número que o parecer, as nuvens e as chamadas mostram.
 8. **Responder as dúvidas e as perguntas.** Dúvida é informação que a prancha não deu;
    pergunta é o que só a pessoa sabe (há terraplenagem? corte de árvore?). Pergunte a ela.
    Para medir outra coisa no desenho, use `ler_desenho` (cotas e polilinhas), proponha o
@@ -85,8 +87,8 @@ avise que esse envio não conta na cota de projetos.
 
 ## Limpar as marcas
 
-Quando a pessoa pedir, ou antes de entregar a prancha, chame `limpar_marcas`: apaga as nuvens
-e o quadro-resumo da camada PRANCHAOK-PARECER e não mexe em mais nada.
+Quando a pessoa pedir, ou antes de entregar a prancha, chame `limpar_marcas`: apaga as nuvens,
+as chamadas e o quadro-resumo da camada PRANCHAOK-PARECER e não mexe em mais nada.
 
 ## Quando algo não funciona
 

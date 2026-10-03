@@ -4,13 +4,19 @@ Entrada: o parecer da rota GET /cliente/v1/pareceres/<id> (packages/backend/conv
 cujo item, desde a rodada 2 (docs/planos/rodada-2-contrato.md, 4.2 e 4.4), pode trazer
 `titulo`, `modo`, `regiao` {tipo, rotulo, handleTitulo?, caixa?, espaco?}, `aguardaGatilho`,
 `resposta` e `etapa`, e a situação `conferir_a_mao` ou `pergunta`. Parecer antigo vem sem
-esses campos e cai nos mesmos caminhos (sem região, título = texto).
+esses campos e cai nos mesmos caminhos (sem região, título = texto). Desde a rodada 5, também
+`outrasRegioes` (mesma forma): os outros lugares do item, um por tipo ("planta baixa E corte";
+"carimbo E site da Prefeitura", este fora da prancha, só com o rótulo). Rota antiga, sem o campo:
+só a `regiao`, como antes.
 
 Lugar de uma linha, nesta ordem (contrato, 4.2):
   1. os handles do próprio item (lugar "desenho": ambiente, texto achado, geometria medida);
   2. os handles dos campos de que ele depende (origem do valor lido);
-  3. a região com caixa (nuvem em volta da caixa) ou só com o título (nuvem em volta dele);
+  3. a região com caixa (nuvem em volta da caixa) ou só com o título (nuvem em volta dele), e
+     também cada um dos outros lugares achados no desenho (`outrasRegioes`);
   4. nada: só o quadro-resumo. A região só com tipo e rótulo diz onde olhar, mas não é lugar.
+No carimbo, no quadro de áreas e onde as nuvens se amontoariam, a marca é uma chamada com seta
+em vez da nuvem (0.3.4, chamadas.py).
 
 Resposta do responsável na web (rodada 4b; a rota manda `marca` em cada item desde a 0.3.1 do
 backend, e o MCP antigo ignora): o item que ele conferiu ("sim"), contestou ("discordo") ou marcou
@@ -76,13 +82,21 @@ class Linha:
     texto: str
     handles: list[str] = field(default_factory=list)
     regiao: dict | None = None  # só se dá para achar no desenho (caixa ou título)
-    onde_olhar: str | None = None  # rótulo da região, achada ou não ("Planta de situação")
+    # Os outros lugares do item achados no desenho (rodada 5), na forma de `regiao`.
+    outras_regioes: list[dict] = field(default_factory=list)
+    # Rótulos de todos os lugares, achados ou não ("Planta baixa e Corte").
+    onde_olhar: str | None = None
     faltando: list[str] = field(default_factory=list)
     aguarda_gatilho: str | None = None
 
     @property
+    def regioes(self) -> list[dict]:
+        """Todas as regiões achadas no desenho: a `regiao` (se achada) e as outras."""
+        return ([self.regiao] if self.regiao else []) + self.outras_regioes
+
+    @property
     def tem_lugar(self) -> bool:
-        return bool(self.handles or self.regiao)
+        return bool(self.handles or self.regioes)
 
 
 def _sem_repetir(valores):
@@ -125,7 +139,8 @@ def regiao_achada(regiao) -> dict | None:
     if titulo is None and (caixa is None or espaco == "papel"):
         return None
     return {"handleTitulo": titulo, "caixa": caixa, "espaco": espaco,
-            "rotulo": str(regiao.get("rotulo") or regiao.get("tipo") or "região")}
+            "rotulo": str(regiao.get("rotulo") or regiao.get("tipo") or "região"),
+            "tipo": regiao.get("tipo") if isinstance(regiao.get("tipo"), str) else None}
 
 
 def com_lugar_medido(p: dict, medidas: dict | None) -> dict:
@@ -150,6 +165,22 @@ def com_lugar_medido(p: dict, medidas: dict | None) -> dict:
     return {**p, "itens": itens}
 
 
+def _outras_regioes(item: dict) -> list[dict]:
+    outras = item.get("outrasRegioes")
+    return [r for r in outras if isinstance(r, dict)] if isinstance(outras, list) else []
+
+
+def onde_olhar(item: dict) -> str | None:
+    """Os rótulos de todos os lugares do item, a `regiao` primeiro, sem repetir: "Planta baixa",
+    "Planta baixa e Corte", "Carimbo, Corte e Fachada". Sem lugar nenhum, None."""
+    regiao = item.get("regiao") if isinstance(item.get("regiao"), dict) else None
+    rotulos = _sem_repetir(str(r.get("rotulo")).strip() for r in [regiao or {}, *_outras_regioes(item)]
+                           if r.get("rotulo") and str(r.get("rotulo")).strip())
+    if not rotulos:
+        return None
+    return rotulos[0] if len(rotulos) == 1 else f"{', '.join(rotulos[:-1])} e {rotulos[-1]}"
+
+
 def linha_do_item(item: dict) -> Linha:
     regiao = item.get("regiao") if isinstance(item.get("regiao"), dict) else None
     return Linha(
@@ -159,7 +190,8 @@ def linha_do_item(item: dict) -> Linha:
         texto=item["texto"],
         handles=handles_do_item(item),
         regiao=regiao_achada(regiao),
-        onde_olhar=(regiao or {}).get("rotulo") or None,
+        outras_regioes=[r for r in map(regiao_achada, _outras_regioes(item)) if r],
+        onde_olhar=onde_olhar(item),
         faltando=list(item.get("faltando") or []),
         aguarda_gatilho=item.get("aguardaGatilho") or None,
     )
@@ -194,6 +226,11 @@ def _rotulo_curto(linha: Linha) -> str:
     return f"[{linha.numero}] {ROTULO[linha.situacao]}: {linha.titulo}"
 
 
+def marca_do_handle(handle: str, linhas: list[Linha]) -> tuple[str, int, str]:
+    """(handle, cor, rótulo) da nuvem de um handle: os itens dele, com a cor do pior."""
+    return (handle, COR[pior(x.situacao for x in linhas)], "; ".join(_rotulo_curto(x) for x in linhas))
+
+
 def marcas_por_handle(linhas: list[Linha]) -> list[tuple[str, int, str]]:
     """(handle, cor, rótulo) por handle: itens no mesmo lugar dividem a nuvem, com a cor do
     pior. O rótulo é cortado depois (pedido.marca), para caber numa linha do pedido."""
@@ -201,29 +238,31 @@ def marcas_por_handle(linhas: list[Linha]) -> list[tuple[str, int, str]]:
     for linha in linhas:
         for h in linha.handles:
             por_handle.setdefault(h, []).append(linha)
-    return [(h, COR[pior(x.situacao for x in ls)], "; ".join(_rotulo_curto(x) for x in ls))
-            for h, ls in por_handle.items()]
+    return [marca_do_handle(h, ls) for h, ls in por_handle.items()]
 
 
-def _chave_regiao(regiao: dict) -> tuple:
+def chave_regiao(regiao: dict) -> tuple:
     return (regiao["handleTitulo"], tuple(regiao["caixa"]) if regiao["caixa"] else None, regiao["espaco"])
 
 
 def marcas_por_regiao(linhas: list[Linha]) -> tuple[list[tuple], list[dict]]:
     """Uma nuvem por região, com os itens dela: (handleTitulo, caixa, espaco, cor, rótulo) e,
     na mesma ordem, {rotulo da região, itens: [números]}. O rótulo da nuvem começa pelos
-    números, que sobrevivem ao corte: "Planta de situação - itens 3, 7, 12 - [3] ERRO: ...". """
-    grupos: dict[tuple, list[Linha]] = {}
+    números, que sobrevivem ao corte: "Planta de situação - itens 3, 7, 12 - [3] ERRO: ...".
+    O item de mais de um lugar (rodada 5: "planta baixa e corte") entra na nuvem de cada um."""
+    grupos: dict[tuple, tuple[str, list[Linha]]] = {}
     for linha in linhas:
-        if linha.regiao:
-            grupos.setdefault(_chave_regiao(linha.regiao), []).append(linha)
+        for regiao in linha.regioes:
+            _, ls = grupos.setdefault(chave_regiao(regiao), (regiao["rotulo"], []))
+            if linha not in ls:
+                ls.append(linha)
     marcas, grupos_saida = [], []
-    for (titulo, caixa, espaco), ls in grupos.items():
+    for (titulo, caixa, espaco), (nome, ls) in grupos.items():
         nomes = ", ".join(str(x.numero) for x in ls)
-        rotulo = (f"{ls[0].regiao['rotulo']} - {'item' if len(ls) == 1 else 'itens'} {nomes} - "
+        rotulo = (f"{nome} - {'item' if len(ls) == 1 else 'itens'} {nomes} - "
                   + "; ".join(_rotulo_curto(x) for x in ls))
         marcas.append((titulo, list(caixa) if caixa else None, espaco, COR[pior(x.situacao for x in ls)], rotulo))
-        grupos_saida.append({"rotulo": ls[0].regiao["rotulo"], "itens": [x.numero for x in ls]})
+        grupos_saida.append({"rotulo": nome, "itens": [x.numero for x in ls]})
     return marcas, grupos_saida
 
 
@@ -292,10 +331,12 @@ def _cortar(texto: str, limite: int = MAXIMO_TEXTO_QUADRO) -> str:
     return texto if len(texto) <= limite else texto[: limite - 3] + "..."
 
 
-def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_parecer: str) -> list[str]:
+def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_parecer: str,
+                  chamadas: frozenset[int] | set[int] = frozenset()) -> list[str]:
     """Linhas do quadro-resumo (uma por parágrafo do MTEXT). Erros vão todos; dúvidas também,
     mas as que esperam o mesmo dado numa linha só ("falta: Pé-direito...: itens 3, 7, 12");
-    "(nuvem)" nos que ganharam nuvem. As perguntas sobre o projeto vão uma por resposta, e as sobre
+    "(nuvem)" nos que ganharam nuvem e "(chamada)" nos que só ganharam chamada (`chamadas`, 0.3.4:
+    o rótulo da chamada não tem o título, então o conferir à mão com chamada também vem aqui). As perguntas sobre o projeto vão uma por resposta, e as sobre
     documentos numa linha (respondem-se no Prancha Ok); conferir à mão, só os sem nuvem, com onde
     olhar. Se não cabe, corta-se primeiro o conferir à mão e depois as dúvidas: as perguntas
     nunca (revisão do especialista, rodada 2: "o quadro-resumo não pode cortar as perguntas").
@@ -309,15 +350,20 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
     if conta := linha_da_conta(p.get("contaDoResponsavel")):
         cabecalho.append(conta)
     if presentes:
-        cabecalho.append("nuvens: " + ", ".join(NOME_COR[s] for s in presentes))
+        cabecalho.append(("nuvens e chamadas: " if chamadas else "nuvens: ") + ", ".join(NOME_COR[s] for s in presentes))
     com_nuvem = sum(1 for linha in linhas if linha.numero in marcados)
-    cabecalho.append(f"{com_nuvem} de {len(linhas)} itens com nuvem no desenho; os outros estão aqui")
+    if chamadas:
+        cabecalho.append(f"{com_nuvem} de {len(linhas)} itens com nuvem ou chamada no desenho; os outros estão aqui")
+    else:
+        cabecalho.append(f"{com_nuvem} de {len(linhas)} itens com nuvem no desenho; os outros estão aqui")
     if perguntas:
         cabecalho.append(f"{sum(len(g['itens']) for g in perguntas)} itens esperam resposta: responda no "
                          "Prancha Ok ou pelo assistente")
     cabecalho.append("")
 
     def nuvem(linha: Linha) -> str:
+        if linha.numero in chamadas:
+            return " (chamada)"
         return " (nuvem)" if linha.numero in marcados else ""
 
     def item(linha: Linha, texto: str) -> str:
@@ -345,7 +391,8 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
         n = len(documentos)
         linhas_perguntas.append(f"- {n} {'pergunta' if n == 1 else 'perguntas'} sobre documentos do processo (RGI, "
                                 "ART, taxas...): responda no Prancha Ok")
-    conferir = [item(x, x.titulo) for x in linhas if x.situacao == "conferir_a_mao" and x.numero not in marcados]
+    conferir = [item(x, x.titulo) for x in linhas
+                if x.situacao == "conferir_a_mao" and (x.numero not in marcados or x.numero in chamadas)]
 
     secoes = [["EM DESACORDO", erros], ["DÚVIDAS", duvidas], ["PERGUNTAS", linhas_perguntas],
               ["CONFERIR À MÃO (sem nuvem)", conferir]]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from . import __version__, atualizacao, autocad, backend, instalacao, marcas, medidas
+from . import __version__, atualizacao, autocad, backend, chamadas, instalacao, marcas, medidas
 from .autocad import AutocadIndisponivel
 from .backend import ErroBackend, NaoConectado
 from .locais import api, empacotado, gravar_estado, ler_estado, nome_maquina, pasta, pasta_ipc, pasta_lisp
@@ -24,7 +24,7 @@ desenho) -> peça para salvar o desenho -> `medir_prancha` -> mostre as medidas 
 letras (A, B, C...) e peça a resposta em bloco: "tudo certo", "tudo certo menos B e D", "só A e C
 estão certos" ou "vou responder um a um" -> `enviar_prancha` com as `respostas` confirmadas (só
 depois dessa resposta; sem medir, o envio para e pede a medição) -> o parecer já vem marcado no
-desenho (nuvens e quadro-resumo; `marcar_parecer` marca de novo) -> o arquiteto corrige ou responde
+desenho (nuvens, chamadas e quadro-resumo; `marcar_parecer` marca de novo) -> o arquiteto corrige ou responde
 as dúvidas e as perguntas (`responder_itens`, que também marca) -> `medir_prancha` e
 `enviar_prancha` de novo. Crítica ou falso apontamento que a pessoa contar: `enviar_sugestao`. Se
 algo não funcionar: `diagnosticar`.
@@ -307,15 +307,14 @@ def _no_desenho(item: dict, rotulos: dict, detalhe: bool) -> list[dict]:
 def _linha_resumo(item: dict, rotulos: dict, detalhe: bool, *, texto: bool = True) -> dict:
     """Um item para o chat: número, título, o que diz, a referência (a lei, ou "Sugestão
     referenciada" quando não há lei) e onde olhar na prancha."""
-    regiao = item.get("regiao") or {}
     saida = {"item": item["ordem"] + 1}
     if item.get("titulo"):
         saida["titulo"] = item["titulo"]
     if texto or detalhe or not item.get("titulo"):
         saida["texto"] = item["texto"]
     saida["referencia"] = item.get("referenciaLegal")
-    if regiao.get("rotulo"):
-        saida["ondeOlhar"] = regiao["rotulo"]
+    if onde := marcas.onde_olhar(item):
+        saida["ondeOlhar"] = onde
     if no_desenho := _no_desenho(item, rotulos, detalhe):
         saida["noDesenho"] = no_desenho
     if item.get("faltando"):
@@ -550,7 +549,7 @@ def _com_marcas(resumo: dict, parecer_id: str, status: str, marcar: bool) -> dic
     marcado = marcar_parecer(parecer_id)
     if not marcado.get("ok"):
         return {**resumo, "marcas": {"ok": False, "erro": marcado.get("erro")}}
-    return {**resumo, "marcas": {k: marcado[k] for k in ("marcados", "apresentados", "nuvens", "mensagem")
+    return {**resumo, "marcas": {k: marcado[k] for k in ("marcados", "apresentados", "nuvens", "chamadas", "mensagem")
                                  if k in marcado}}
 
 
@@ -715,22 +714,38 @@ def _situacoes(incluir_duvidas: bool, incluir_conferir: bool) -> tuple[str, ...]
                  or (incluir_conferir and s in ("pergunta", "conferir_a_mao")))
 
 
-def _marcar_no_desenho(linhas: list[marcas.Linha]) -> tuple[set[int], dict]:
-    """Manda as nuvens ao AutoCAD: primeiro nos handles; a linha que não ganhou nenhuma (sem
-    handle, ou handle que o desenho não tem mais) vai para a nuvem da região, se houver.
-    Devolve os números das linhas marcadas e o que não se achou."""
-    feito = autocad.marcar(marcas.marcas_por_handle(linhas)) if any(x.handles for x in linhas) else {}
-    achados = set(feito.get("marcadas") or [])
-    marcados = {x.numero for x in linhas if achados.intersection(x.handles)}
-    pendentes = [x for x in linhas if x.numero not in marcados and x.regiao]
+def _indices(resposta: dict, chave: str, total: int) -> list[int]:
+    return [i for i in resposta.get(chave) or [] if isinstance(i, int) and 0 <= i < total]
+
+
+def _marcar_no_desenho(linhas: list[marcas.Linha], p: dict | None = None) -> tuple[set[int], dict]:
+    """Manda as marcas ao AutoCAD. Primeiro pergunta onde está cada handle (e o título de cada
+    tabela do parecer); chamadas.planejar divide: no carimbo, no quadro de áreas e onde as nuvens
+    se amontoariam, chamada com seta (0.3.4); no resto, nuvem no handle. A linha que não ganhou
+    nenhuma (sem handle, ou handle que o desenho não tem mais) vai para a nuvem da região, se houver.
+    Devolve os números das linhas marcadas e o que não se achou, com `soChamada`: as marcadas só
+    por chamada (o quadro-resumo dá o título delas)."""
+    pedidos = list(dict.fromkeys([h for x in linhas for h in x.handles] + chamadas.handles_das_tabelas(p or {})))
+    achados = chamadas.lugares(autocad.caixas(pedidos)) if pedidos else {}
+    plano = chamadas.planejar(linhas, achados, chamadas.tabelas(p or {}, achados))
+    feito = autocad.marcar(plano.nuvens) if plano.nuvens else {}
+    com_nuvem = set(feito.get("marcadas") or [])
+    marcados = {x.numero for x in linhas if com_nuvem.intersection(x.handles)}
+    desenhadas = autocad.marcar_chamadas(plano.chamadas) if plano.chamadas else {}
+    com_chamada = {n for i in _indices(desenhadas, "marcadas", len(plano.chamadas)) for n in plano.chamadas[i].itens}
+    pendentes = [x for x in linhas if x.numero not in marcados | com_chamada and x.regioes]
     regioes, grupos = marcas.marcas_por_regiao(pendentes)
     feitas = autocad.marcar_regioes(regioes) if regioes else {}
-    for indice in feitas.get("marcadas") or []:
-        if isinstance(indice, int) and 0 <= indice < len(grupos):
-            marcados.update(grupos[indice]["itens"])
-    nao_achadas = [grupos[i] for i in feitas.get("semLugar") or [] if isinstance(i, int) and 0 <= i < len(grupos)]
-    return marcados, {"handlesNaoAchados": feito.get("semLugar") or [], "regioesNaoAchadas": nao_achadas,
-                      "nuvens": len(achados) + len(feitas.get("marcadas") or [])}
+    for indice in _indices(feitas, "marcadas", len(grupos)):
+        marcados.update(grupos[indice]["itens"])
+    nao_achadas = [grupos[i] for i in _indices(feitas, "semLugar", len(grupos))]
+    nao_achados = [h for h in pedidos if h not in achados and any(h in x.handles for x in linhas)]
+    return marcados | com_chamada, {
+        "handlesNaoAchados": nao_achados + [h for h in feito.get("semLugar") or [] if h not in nao_achados],
+        "regioesNaoAchadas": nao_achadas,
+        "nuvens": len(com_nuvem) + len(feitas.get("marcadas") or []),
+        "chamadas": sum(1 for i in _indices(desenhadas, "marcadas", len(plano.chamadas)) if plano.chamadas[i].texto),
+        "soChamada": com_chamada - marcados}
 
 
 @mcp.tool()
@@ -740,7 +755,9 @@ def marcar_parecer(parecer_id: str | None = None, incluir_duvidas: bool = True, 
     na prancha: em vermelho o que está em desacordo, em laranja as dúvidas e, com
     `incluir_conferir`, em azul o que conferir à mão e em magenta as perguntas. A nuvem vai em
     volta do valor no desenho (handles) ou, quando o item é de uma parte da prancha (planta
-    de situação, corte, carimbo, quadro de áreas...), em volta dessa parte. Ao lado do
+    de situação, corte...), em volta dessa parte. No carimbo, no quadro de áreas e onde várias
+    nuvens cairiam no mesmo lugar, o item ganha uma seta até uma chamada "[nº] SITUAÇÃO" numa
+    coluna ao lado, em vez da nuvem. Ao lado do
     desenho, um quadro-resumo com os itens e o que ficou sem lugar (e as perguntas abertas).
     Apaga as marcas anteriores antes. Tudo na camada PRANCHAOK-PARECER. Deixa o desenho com
     alteração não salva. Devolve quantos itens apresentados têm lugar e quantos viraram nuvem."""
@@ -751,15 +768,17 @@ def marcar_parecer(parecer_id: str | None = None, incluir_duvidas: bool = True, 
             return _nada_a_marcar(p)
         linhas = marcas.linhas_apresentadas(p, _situacoes(incluir_duvidas, incluir_conferir))
         autocad.limpar()
-        marcados, faltas = _marcar_no_desenho(linhas)
+        marcados, faltas = _marcar_no_desenho(linhas, p)
         if quadro:
-            autocad.quadro(marcas.linhas_quadro(p, linhas, marcados, SITUACAO.get(p["status"], p["status"])))
+            autocad.quadro(marcas.linhas_quadro(p, linhas, marcados, SITUACAO.get(p["status"], p["status"]),
+                                                faltas["soChamada"]))
         medida = marcas.medida(linhas, marcados)
         return {
             "ok": True,
             **{k: medida[k] for k in ("apresentados", "comLugar", "marcados", "percentualMarcados")},
             "porSituacao": medida["porSituacao"],
             "nuvens": faltas["nuvens"],
+            "chamadas": faltas["chamadas"],
             "handlesNaoAchados": faltas["handlesNaoAchados"],
             "regioesNaoAchadas": faltas["regioesNaoAchadas"],
             "itensSemLugarNoDesenho": [{"item": x.numero, "titulo": x.titulo,
@@ -767,9 +786,11 @@ def marcar_parecer(parecer_id: str | None = None, incluir_duvidas: bool = True, 
                                        for x in linhas if x.numero not in marcados and x.situacao != "pergunta"],
             "perguntasAbertas": sum(1 for x in linhas if x.situacao == "pergunta"),
             "quadroResumo": quadro,
-            "mensagem": "Nuvens e quadro-resumo na camada PRANCHAOK-PARECER (não plotam; o Prancha Ok ignora "
-                        "essa camada). Vermelho: em desacordo; laranja: dúvida; azul: conferir à mão; magenta: "
-                        "pergunta. O desenho fica com alteração não salva.",
+            "mensagem": "Nuvens, chamadas e quadro-resumo na camada PRANCHAOK-PARECER (não plotam; o Prancha Ok "
+                        "ignora essa camada). No carimbo, no quadro de áreas e onde as nuvens se amontoariam, cada "
+                        "item é uma seta até uma chamada \"[nº] SITUAÇÃO\" ao lado (o título está no quadro-resumo). "
+                        "Vermelho: em desacordo; laranja: dúvida; azul: conferir à mão; magenta: pergunta. O desenho "
+                        "fica com alteração não salva.",
         }
     except Exception as e:
         return _erro(e)
@@ -797,8 +818,8 @@ def ir_para_item(item: int, parecer_id: str | None = None) -> dict:
                 if "SEM_LUGAR" not in str(e):  # AutoCAD fora do ar: não adianta tentar o próximo
                     raise
                 erro = e  # handle que o desenho não tem mais (ou dentro de um bloco): tenta o próximo
-        if linha.regiao:
-            r = linha.regiao
+        if linha.regioes:  # a `regiao` achada ou, sem ela, o primeiro dos outros lugares achados
+            r = linha.regioes[0]
             return {"ok": True, "regiao": r["rotulo"], **autocad.ir(r["handleTitulo"], r["caixa"], r["espaco"])}
         if erro:
             raise erro
@@ -811,7 +832,7 @@ def ir_para_item(item: int, parecer_id: str | None = None) -> dict:
 
 @mcp.tool()
 def limpar_marcas() -> dict:
-    """Apaga todas as marcas e o quadro-resumo do parecer (camada PRANCHAOK-PARECER) do desenho."""
+    """Apaga todas as marcas (nuvens, chamadas) e o quadro-resumo do parecer (camada PRANCHAOK-PARECER) do desenho."""
     try:
         return autocad.limpar()
     except Exception as e:

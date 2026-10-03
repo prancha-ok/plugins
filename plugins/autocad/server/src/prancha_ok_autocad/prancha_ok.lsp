@@ -23,11 +23,17 @@
 ;;; (`marcar`) ou de cada região da prancha (`regioes`: a caixa da vista ou,
 ;;; sem ela, o título da vista, carimbo, quadro de áreas...).
 ;;;
+;;; Chamadas (0.3.4, observações de 02/10/2026, item 2): no carimbo, no quadro de
+;;; áreas e onde as nuvens se amontoariam, uma seta do item até um rótulo
+;;; "[nº] SITUAÇÃO" numa coluna ao lado. O MCP pergunta onde está cada handle
+;;; (`caixas`), decide toda a geometria (chamadas.py) e manda pronta
+;;; (`chamadas`): aqui só se confere o formato e se desenha.
+;;;
 ;;; Escreve no desenho só na camada PRANCHAOK-PARECER (marcas do parecer, que
 ;;; não plotam e que o motor ignora) e no dicionário PRANCHAOK (vínculo com o
 ;;; projeto). Nunca altera o que o arquiteto desenhou.
 
-(setq *pok-versao* "0.3.3")
+(setq *pok-versao* "0.3.4")
 (setq *pok-camada* "PRANCHAOK-PARECER")
 (setq *pok-codificacao* nil)
 
@@ -570,6 +576,116 @@
   )
 )
 
+;; ---------------------------------------------------------------- chamadas (0.3.4)
+
+;; caixas: lista de handles. Responde {"ok":true} e uma linha por handle: o espaço, o layout,
+;; a caixa (pok-caixa, sem folga) e a altura do texto (null se não é texto), ou semLugar (o
+;; desenho não tem o handle, ou ele está dentro de um bloco, onde a nuvem também não vai).
+(defun pok-caixas (saida handles / e ed esp cx)
+  (write-line "{\"ok\":true}" saida)
+  (foreach h handles
+    (setq e (if (and (= (type h) 'STR) (/= h "")) (handent h))
+          ed (if e (entget e))
+          esp (if ed (pok-espaco ed))
+          cx (if (and esp (member (car esp) '("modelo" "papel"))) (pok-caixa ed)))
+    (write-line
+      (if cx
+        (strcat "{\"h\":" (pok-js h) ",\"e\":" (pok-js (car esp)) ",\"l\":" (pok-js (cadr esp))
+                ",\"c\":" (pok-jlista (mapcar 'pok-jn cx))
+                ",\"a\":" (pok-jn (if (member (cdr (assoc 0 ed)) '("TEXT" "MTEXT" "ATTRIB" "ATTDEF")) (cdr (assoc 40 ed))))
+                "}")
+        (strcat "{\"h\":" (pok-js (if (= (type h) 'STR) h "")) ",\"semLugar\":true}")
+      )
+      saida
+    )
+  )
+)
+
+;; Ponto (x y) do pedido, em reais; nil se não são dois números.
+(defun pok-ponto (p)
+  (if (and (= (type p) 'LIST)
+           (= (length p) 2)
+           (vl-every '(lambda (n) (member (type n) '(INT REAL))) p))
+    (mapcar 'float p)
+  )
+)
+
+;; Onde desenhar a chamada: no espaço e no layout do handle de referência ou, sem ele, no modelo.
+(defun pok-espaco-chamada (h espaco / e ed esp)
+  (setq e (if (and (= (type h) 'STR) (/= h "")) (handent h))
+        ed (if e (entget e))
+        esp (if ed (pok-espaco ed)))
+  (cond
+    ((and esp (member (car esp) '("modelo" "papel"))) esp)
+    ((and (not ed) (= espaco "modelo")) (list "modelo" "Model"))
+  )
+)
+
+;; Seta: polilinha do começo à base da ponta (largura 0) e da base à ponta (largura `largura`
+;; na base, 0 na ponta): ponta cheia, sem depender do estilo de cota do desenho (e no LT).
+(defun pok-seta (pts largura espaco cor)
+  (entmakex
+    (append
+      (list (cons 0 "LWPOLYLINE") (cons 100 "AcDbEntity") (cons 8 *pok-camada*))
+      (pok-cor cor)
+      (if (= (car espaco) "papel") (list (cons 67 1) (cons 410 (cadr espaco))))
+      (list (cons 100 "AcDbPolyline") (cons 90 3) (cons 70 0)
+            (cons 10 (nth 0 pts)) (cons 40 0.0) (cons 41 0.0)
+            (cons 10 (nth 1 pts)) (cons 40 largura) (cons 41 0.0)
+            (cons 10 (nth 2 pts)) (cons 40 0.0) (cons 41 0.0))
+    )
+  )
+)
+
+;; Rótulo da chamada: MTEXT com o ponto no meio da esquerda (anexo 4), uma linha.
+(defun pok-texto-chamada (ponto altura texto espaco cor)
+  (entmakex
+    (append
+      (list (cons 0 "MTEXT") (cons 100 "AcDbEntity") (cons 8 *pok-camada*))
+      (pok-cor cor)
+      (if (= (car espaco) "papel") (list (cons 67 1) (cons 410 (cadr espaco))))
+      (list (cons 100 "AcDbMText") (list 10 (car ponto) (cadr ponto) 0.0)
+            (cons 40 altura) (cons 71 4) (cons 1 texto))
+    )
+  )
+)
+
+;; chamadas: lista de (handle-de-referencia espaco cor altura (começo base ponta)
+;; largura-da-ponta (x y)-do-rotulo texto...); texto "" é só a seta. Devolve os índices (na ordem do pedido) das
+;; desenhadas e das que vieram tortas ou sem lugar.
+(defun pok-chamadas (saida chamadas / esp pts rot i feitas sem)
+  (pok-garantir-camada)
+  (setq i 0)
+  (foreach c chamadas
+    (setq esp nil pts nil rot nil)
+    (if (and (= (type c) 'LIST)
+             (>= (length c) 8)
+             (member (type (nth 3 c)) '(INT REAL))
+             (> (nth 3 c) 0)
+             (member (type (nth 5 c)) '(INT REAL))
+             (= (type (nth 4 c)) 'LIST)
+             (= (length (nth 4 c)) 3)
+             (setq pts (mapcar 'pok-ponto (nth 4 c)))
+             (not (member nil pts))
+             (setq rot (pok-ponto (nth 6 c)))
+             (setq esp (pok-espaco-chamada (nth 0 c) (nth 1 c))))
+      (progn
+        (pok-seta pts (float (nth 5 c)) esp (nth 2 c))
+        ;; Texto vazio: só mais uma seta do mesmo rótulo (o item tem outro lugar no grupo).
+        (if (/= (pok-juntar (cdddr (cddddr c))) "")
+          (pok-texto-chamada rot (float (nth 3 c)) (pok-juntar (cdddr (cddddr c))) esp (nth 2 c)))
+        (setq feitas (cons (itoa i) feitas))
+      )
+      (setq sem (cons (itoa i) sem))
+    )
+    (setq i (1+ i))
+  )
+  (write-line
+    (strcat "{\"ok\":true,\"marcadas\":" (pok-jlista (reverse feitas)) ",\"semLugar\":" (pok-jlista (reverse sem)) "}")
+    saida
+  )
+)
+
 ;; Abre o layout, dá zoom e seleciona: em volta da entidade `handle` ou, com `caixa`, em
 ;; volta da caixa da região (no layout do título `handle`, ou no modelo sem título).
 (defun pok-ir (saida handle caixa espaco / lugar esp cx ed m)
@@ -672,6 +788,8 @@
      (write-line (strcat "{\"fim\":true,\"entidades\":" (itoa n) "}") saida))
     ((= comando "marcar") (pok-marcar saida args))
     ((= comando "regioes") (pok-regioes saida args))
+    ((= comando "caixas") (pok-caixas saida args))
+    ((= comando "chamadas") (pok-chamadas saida args))
     ((= comando "limpar") (pok-limpar saida))
     ((= comando "quadro") (pok-quadro saida (pok-juntar args)))
     ((= comando "salvar") (pok-salvar saida))

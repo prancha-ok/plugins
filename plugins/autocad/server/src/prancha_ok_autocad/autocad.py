@@ -22,7 +22,7 @@ from pathlib import Path
 from . import __version__
 from .instalacao import expressao_confiavel
 from .locais import lisp_instalado, pasta_ipc
-from .pedido import marca, pedacos_quadro, pedido_lisp, regiao
+from .pedido import chamada, marca, pedacos_quadro, pedido_lisp, regiao
 
 INTERVALO_S = 0.1
 PRAZO_PADRAO_S = 20.0
@@ -318,6 +318,20 @@ def marcar_regioes(regioes: list[tuple]) -> dict:
     ou, sem ela, em volta do título. Cada uma numa linha do pedido (pedido.regiao).
     Devolve {marcadas: [índices], semLugar: [índices]} (índice na lista pedida)."""
     return pedir("regioes", *(regiao(*r) for r in regioes), prazo_s=60.0)[0]
+
+
+def caixas(handles: list[str]) -> list[dict]:
+    """Onde está cada handle (0.3.4): uma linha por handle, {h, e: espaço, l: layout, c: caixa
+    [x0 y0 x1 y1], a: altura do texto ou null} ou {h, semLugar: true} (o desenho não tem, ou está
+    dentro de um bloco). chamadas.py decide com isso o que vira chamada e onde."""
+    return pedir("caixas", *handles, prazo_s=60.0)[1:]
+
+
+def marcar_chamadas(lista) -> dict:
+    """Seta + rótulo de cada chamada (chamadas.Chamada), com a geometria já decidida.
+    Devolve {marcadas: [índices], semLugar: [índices]} (índice na lista pedida)."""
+    return pedir("chamadas", *(chamada(c.referencia, c.espaco, c.cor, c.altura, c.seta, c.largura_ponta,
+                                       c.rotulo, c.texto) for c in lista), prazo_s=60.0)[0]
 
 
 def limpar() -> dict:

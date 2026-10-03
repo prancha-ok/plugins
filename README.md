@@ -2,11 +2,11 @@
 
 Liga o AutoCAD aberto ao [Prancha Ok](https://pranchaok.com.br): o assistente envia a
 prancha salva, traz o parecer (Aprovado, Pendente ou Em revisão humana, com a lei de
-cada item) e marca no desenho, com nuvens numeradas, o que pede atenção. As marcas ficam
+cada item) e marca no desenho, com nuvens e chamadas numeradas, o que pede atenção. As marcas ficam
 numa camada própria (`PRANCHAOK-PARECER`) que não plota. O assistente **nunca altera** o
 que você desenhou.
 
-Versão 0.3.3. Precisa de:
+Versão 0.3.4. Precisa de:
 
 - Windows 10 ou 11;
 - AutoCAD 2024 ou mais novo, completo ou LT. Não funciona no GstarCAD, BricsCAD, ZWCAD e
@@ -21,7 +21,7 @@ confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
 
 ## Claude Desktop (extensão)
 
-1. Baixe a extensão: [prancha-ok-autocad-0.3.3.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.3.3.mcpb)
+1. Baixe a extensão: [prancha-ok-autocad-0.3.4.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.3.4.mcpb)
    (ou em [pranchaok.com.br/autocad](https://pranchaok.com.br/autocad)).
 2. Instale por dentro do Claude Desktop (não pela pasta de downloads: o Windows não conhece
    esse tipo de arquivo e pergunta com qual programa abrir). Clique no seu nome, no canto

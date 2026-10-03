@@ -148,6 +148,18 @@ def regiao(handle_titulo: str | None, caixa: list[float] | None, espaco: str | N
     return [*cabeca, cabe(texto_mtext(rotulo), resto)]
 
 
+def chamada(referencia: str, espaco: str, cor: int, altura: float, seta, largura_ponta: float, rotulo,
+            texto: str) -> list:
+    """Uma chamada do comando `chamadas` (0.3.4): [handle de referência ou "" (o espaço e o layout
+    são os dele; sem ele, o modelo), espaço, cor ACI, altura do texto, ((x y) começo, (x y) base da
+    ponta, (x y) ponta), largura da ponta, (x y) do rótulo, texto do MTEXT], numa linha do pedido.
+    A geometria vem pronta de chamadas.py."""
+    cabeca = [referencia or "", espaco, cor, float(altura), [[float(x), float(y)] for x, y in seta],
+              float(largura_ponta), [float(rotulo[0]), float(rotulo[1])]]
+    resto = LIMITE_LINHA - len(lisp(cabeca)) - 1
+    return [*cabeca, cabe(texto_mtext(texto), resto)]
+
+
 def pedacos_quadro(linhas: list[str]) -> list[str]:
     """O conteúdo do MTEXT do quadro-resumo (uma linha por parágrafo, \\P) em pedaços."""
     return pedacos("\\P".join(texto_mtext(linha) for linha in linhas))
