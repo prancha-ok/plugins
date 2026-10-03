@@ -1,6 +1,6 @@
 [project]
 name = "prancha-ok-autocad"
-version = "0.3.2"
+version = "0.3.3"
 description = "MCP do Prancha Ok para o AutoCAD: envia a prancha, lê o parecer e marca os itens no desenho"
 readme = "INSTALAR.md"
 requires-python = ">=3.10"

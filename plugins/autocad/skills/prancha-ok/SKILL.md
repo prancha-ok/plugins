@@ -37,21 +37,25 @@ simples, sem termos de programação.
    `vincular_projeto`. Projeto novo se cria no site: se a lista vier vazia (ou a prancha é de
    uma obra que ainda não está lá), diga à pessoa para entrar em pranchaok.com.br/app, clicar
    em "Novo projeto" e avisar quando terminar; então chame `listar_projetos` de novo.
-3. **Medir antes de enviar.** Chame `medir_prancha`. Mostre a proposta numa lista curta: cada
-   valor, a unidade e o "como" (ex.: "Área do terreno: 360,00 m², contorno do lote"). Diga
-   também o que não deu para medir (`naoMedido`) e, se houver, onde o quadro diverge do
-   desenho (`divergencias`: a pessoa escolhe um dos dois). Pergunte: "Estão certos? Corrija o
-   que precisar." Se vier aviso de unidade, pergunte a unidade do desenho e meça de novo.
-4. **Enviar com as medidas confirmadas.** Chame `enviar_prancha` com
-   `respostas={campo: valor}` só com os valores que a pessoa confirmou ou corrigiu (número,
-   sem unidade). Eles entram já no primeiro parecer. O envio usa o arquivo salvo, DWG ou DXF;
-   se há alteração não salva, pergunte se pode salvar e, com o sim, use `salvar=true`.
+3. **Salvar e medir antes de enviar.** O parecer usa o arquivo salvo: se há alteração não
+   salva, pergunte se pode salvar. Chame `medir_prancha`. Mostre a proposta numa lista com
+   letras (A, B, C...): cada valor, a unidade e o "como" (ex.: "A. Área do terreno: 360,00 m²,
+   contorno do lote"). Diga também o que não deu para medir (`naoMedido`) e, se houver, onde o
+   quadro diverge do desenho (`divergencias`: a pessoa escolhe um dos dois). Peça a resposta em
+   bloco: "tudo certo", "tudo certo menos B e D", "só A e C estão certos" ou "vou responder um a
+   um". Se vier aviso de unidade, pergunte a unidade do desenho e meça de novo.
+4. **Enviar só depois dessa resposta.** Chame `enviar_prancha` com `respostas={campo: valor}`
+   só com os valores que a pessoa confirmou ou corrigiu (número, sem unidade). Eles entram já
+   no primeiro parecer. Sem `medir_prancha` deste desenho, o envio para e pede a medição;
+   `sem_medir=true` só se a pessoa disser que não quer conferir. Com o sim para salvar, use
+   `salvar=true`.
 5. **Ver o parecer.** Diga a situação e, em poucas linhas, o que está em desacordo, as dúvidas
    e as perguntas. Se ainda estiver processando, chame `ver_parecer` com `aguardar=true`.
    Para a lista inteira, `ver_parecer` com `detalhe=true`. O que o responsável já respondeu no
    site vem em `responsavel` (quanto falta para fechar, os desacordos que ele contestou): é dele,
    nunca diga que o Prancha Ok conferiu.
-6. **Marcar no desenho.** Chame `marcar_parecer`. Ele põe uma nuvem numerada em cada item que
+6. **Marcar no desenho.** O parecer pronto já vem marcado (`marcas` no resultado do envio e do
+   `responder_itens`); `marcar_parecer` marca de novo. Ele põe uma nuvem numerada em cada item que
    tem lugar na prancha (vermelho: em desacordo; laranja: dúvida; magenta: pergunta; azul:
    conferir à mão) e um quadro-resumo ao lado, com quanto falta para fechar. O que o responsável
    resolveu no site não ganha nuvem. Diga quantos itens ficaram marcados.
@@ -61,8 +65,8 @@ simples, sem termos de programação.
    pergunta é o que só a pessoa sabe (há terraplenagem? corte de árvore?). Pergunte a ela.
    Para medir outra coisa no desenho, use `ler_desenho` (cotas e polilinhas), proponha o
    valor e peça confirmação. Grave com `responder_itens`: números em metros ou m², sem
-   unidade; opções como "sim", "não" ou "não se aplica". Ele gera um parecer novo; mostre o
-   que mudou e marque de novo (passo 6).
+   unidade; opções como "sim", "não" ou "não se aplica". Ele gera um parecer novo, já marcado;
+   mostre o que mudou.
 9. **Depois que o arquiteto corrigir**, volte ao passo 3 (meça de novo: o desenho mudou).
 
 ## Críticas e falsos apontamentos

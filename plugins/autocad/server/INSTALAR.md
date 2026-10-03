@@ -71,8 +71,11 @@ Não rode nada que escreva no DWG durante a instalação.
 
 ## Atualizar
 
-Não rode o `desinstalar`. Extraia a versão nova por cima de `<pasta>`, repita o
-passo 1 e reconecte o MCP no assistente (`/mcp`). O LISP novo é copiado e carregado
+Não rode o `desinstalar`. Extraia a versão nova por cima de `<pasta>`, apague as
+pastas `__pycache__` de `<pasta>\src` (e de `<pasta>\src\prancha_ok_autocad`), repita o
+passo 1 e reconecte o MCP no assistente (`/mcp`). Sem apagar o `__pycache__`, o Python pode
+seguir com o código da versão anterior (os zips até a 0.3.2 tinham a mesma data em todos os
+arquivos). O LISP novo é copiado e carregado
 sozinho (a versão dele acompanha a do pacote).
 
 ## Claude Desktop no Windows
