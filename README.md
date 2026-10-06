@@ -6,14 +6,17 @@ cada item) e marca no desenho, com nuvens e chamadas numeradas, o que pede aten�
 numa camada própria (`PRANCHAOK-PARECER`) que não plota. O assistente **nunca altera** o
 que você desenhou.
 
-Versão 0.3.4. Precisa de:
+Versão 0.4.0. Precisa de:
 
 - Windows 10 ou 11;
 - AutoCAD 2024 ou mais novo, completo ou LT. Não funciona no GstarCAD, BricsCAD, ZWCAD e
   outros compatíveis: neles, envie o DWG pelo site;
 - uma conta no Prancha Ok com o projeto da obra já criado: o assistente pergunta em qual
   projeto a prancha entra, e projeto novo só se cria no site
-  ([pranchaok.com.br/app](https://pranchaok.com.br/app), botão "Novo projeto").
+  ([pranchaok.com.br/app](https://pranchaok.com.br/app), botão "Novo projeto");
+- o [uv](https://docs.astral.sh/uv/getting-started/installation/), o programa que roda o
+  conector, também na extensão do Claude Desktop (no PowerShell:
+  `winget install --id=astral-sh.uv -e`). Confira com `uv --version`.
 
 Na primeira vez que o assistente usa o Prancha Ok, ele deixa tudo pronto sozinho: copia o
 arquivo do Prancha Ok para `%USERPROFILE%\.prancha-ok` e põe essa pasta entre as pastas
@@ -21,7 +24,7 @@ confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
 
 ## Claude Desktop (extensão)
 
-1. Baixe a extensão: [prancha-ok-autocad-0.3.4.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.3.4.mcpb)
+1. Baixe a extensão: [prancha-ok-autocad-0.4.0.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.4.0.mcpb)
    (ou em [pranchaok.com.br/autocad](https://pranchaok.com.br/autocad)).
 2. Instale por dentro do Claude Desktop (não pela pasta de downloads: o Windows não conhece
    esse tipo de arquivo e pergunta com qual programa abrir). Clique no seu nome, no canto
@@ -32,8 +35,8 @@ confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
    e clique em "Instalar" (Install). Prefere escolher o arquivo? Na mesma tela, vá em
    Configurações avançadas > Instalar extensão (Advanced settings > Install Extension). Se
    o Windows perguntar "Como você deseja abrir este arquivo?", feche essa janela sem
-   escolher programa e faça como acima. Não precisa instalar Python: o Claude Desktop
-   cuida disso. Se ele avisar que a extensão não é verificada, é esperado: ela vem do site
+   escolher programa e faça como acima. Não precisa instalar Python, mas precisa do uv (acima):
+   sem ele, o Claude diz que o servidor do Prancha Ok não iniciou. Se ele avisar que a extensão não é verificada, é esperado: ela vem do site
    do Prancha Ok, não do diretório da Anthropic. Confirme só com o arquivo baixado do site.
 3. Abra o AutoCAD com uma prancha e peça no Claude: **"conecte ao Prancha Ok"**. Na
    primeira vez o Claude Desktop baixa o que o conector precisa, e ele leva alguns minutos

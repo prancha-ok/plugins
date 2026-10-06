@@ -1,6 +1,6 @@
 {
   "name": "autocad",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção.",
   "author": {
     "name": "Prancha Ok",

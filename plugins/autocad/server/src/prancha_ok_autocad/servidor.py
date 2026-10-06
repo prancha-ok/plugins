@@ -20,14 +20,14 @@ no AutoCAD (2024 ou mais novo, completo ou LT), não no GstarCAD, BricsCAD, ZWCA
 compatíveis: nesses, a pessoa envia o desenho pelo site. O desenho aberto pode ser DWG ou DXF.
 
 Fluxo, sempre nesta ordem: `conectar` (uma vez por computador) -> `vincular_projeto` (uma vez por
-desenho) -> peça para salvar o desenho -> `medir_prancha` -> mostre as medidas numa lista com
-letras (A, B, C...) e peça a resposta em bloco: "tudo certo", "tudo certo menos B e D", "só A e C
-estão certos" ou "vou responder um a um" -> `enviar_prancha` com as `respostas` confirmadas (só
-depois dessa resposta; sem medir, o envio para e pede a medição) -> o parecer já vem marcado no
-desenho (nuvens, chamadas e quadro-resumo; `marcar_parecer` marca de novo) -> o arquiteto corrige ou responde
-as dúvidas e as perguntas (`responder_itens`, que também marca) -> `medir_prancha` e
-`enviar_prancha` de novo. Crítica ou falso apontamento que a pessoa contar: `enviar_sugestao`. Se
-algo não funcionar: `diagnosticar`.
+desenho) -> peça para salvar o desenho -> `enviar_prancha` -> o Prancha Ok lê a prancha e devolve a
+PRÉVIA: as medidas que leu (com letras: A, B, C...) e as perguntas que o parecer faria (numeradas:
+1, 2, 3...). Mostre as duas listas e peça a resposta em bloco: "tudo certo", "tudo certo menos B e
+D", "só A e C estão certos", "1 sim, 2 2,50 m" ou "vou responder um a um" -> `confirmar_previa` com
+as medidas confirmadas ou corrigidas e as respostas dadas -> sai um parecer só, já marcado no
+desenho (nuvens, chamadas e quadro-resumo; `marcar_parecer` marca de novo) -> o arquiteto corrige ou
+responde o que sobrou (`responder_itens`, que também marca) -> `enviar_prancha` de novo. Crítica ou
+falso apontamento que a pessoa contar: `enviar_sugestao`. Se algo não funcionar: `diagnosticar`.
 
 O parecer traz só o que vale para este projeto (o que não se aplica fica de fora, só contado):
 - em desacordo (erro): a prancha contraria a referência do item;
@@ -48,8 +48,10 @@ Regras:
   referenciada" quando o item não vem de uma lei). Não invente outra fonte para o item.
 - Dúvida é informação que a prancha não deu; pergunta é o que só a pessoa sabe. Pergunte e grave
   com `responder_itens`.
-- Medidas: `medir_prancha` (e `ler_desenho`) só PROPÕEM. Mostre cada valor com o "como" e envie
-  só os que a pessoa confirmou ou corrigiu: o valor enviado é declarado por ela.
+- Medidas: as da prévia são o que o Prancha Ok LEU da prancha. Mostre cada valor com de onde saiu e
+  mande em `confirmar_previa` só as que a pessoa confirmou ou corrigiu: o valor é declarado por ela.
+  `medir_prancha` (medição no AutoCAD) é opcional: serve para comparar quando a pessoa duvida de uma
+  medida lida; nunca mande a medição sem o sim dela.
 - Salvar o desenho (`enviar_prancha` com salvar=true) só com o "sim" da pessoa, perguntado uma vez.
 - Custos estimados são estimativas: o valor final é da Prefeitura. Cite a lei de cada um.
 - Prancha não reconhecida (`recusada`): o Prancha Ok não conferiu nada porque o desenho não parece
@@ -61,7 +63,8 @@ Regras:
 mcp = FastMCP("prancha-ok", instructions=INSTRUCOES)
 
 SITUACAO = {"aprovado": "Aprovado", "pendente": "Pendente", "em_revisao": "Em revisão humana",
-            "processando": "Processando", "falhou": "Falhou", "recusado": "Prancha não reconhecida"}
+            "processando": "Processando", "falhou": "Falhou", "recusado": "Prancha não reconhecida",
+            "aguardando_medidas": "Esperando a conferência da prévia"}
 PRAZO_CONECTAR_S = 45
 # Tempo total de uma ferramenta que espera o parecer (o cliente MCP pode cortar antes de 60 s).
 PRAZO_PARECER_S = 50
@@ -74,12 +77,20 @@ def _erro(e: Exception) -> dict:
 # ---------------------------------------------------------------- conexão
 
 def _com_aviso_de_versao() -> dict:
-    """{"atualizacao": {versao, mensagem}} quando o site tem versão mais nova; {} senão (ou se falhar)."""
+    """{"atualizacao": {versao, mensagem}} quando o site tem versão mais nova e {"outroConector": texto} quando outro
+    servidor do Prancha Ok roda ao mesmo tempo neste computador (instalacao.aviso_de_outro_servidor); {} senão."""
+    saida = {}
     try:
-        aviso = atualizacao.aviso()
+        if aviso := atualizacao.aviso():
+            saida["atualizacao"] = aviso
     except Exception:
-        aviso = None
-    return {"atualizacao": aviso} if aviso else {}
+        pass
+    try:
+        if duplicado := instalacao.aviso_de_outro_servidor():
+            saida["outroConector"] = duplicado
+    except Exception:
+        pass
+    return saida
 
 
 @mcp.tool()
@@ -137,6 +148,21 @@ def _vinculo_lembrado(arquivo: str) -> dict | None:
     return (ler_estado().get("vinculos") or {}).get(arquivo.lower())
 
 
+def _esquecer_vinculo(arquivo: str) -> None:
+    vinculos = dict(ler_estado().get("vinculos") or {})
+    if vinculos.pop(arquivo.lower(), None) is not None:
+        gravar_estado(vinculos=vinculos)
+
+
+def _vinculo_perdido(vinculo: dict, projetos: list) -> str:
+    """O projeto do vínculo não está mais entre os da empresa (pente fino de 04/10/2026, item V: "quando o projeto
+    é apagado no site, o desenho continua vinculado a ele sem aviso")."""
+    nome = vinculo.get("projeto") or vinculo.get("projetoId")
+    return (f"O projeto \"{nome}\", a que este desenho está vinculado, não existe mais no Prancha Ok (foi apagado "
+            "no site, ou a conta saiu da empresa dele). Pergunte à pessoa em qual projeto enviar (`listar_projetos`) "
+            "e vincule de novo com `vincular_projeto`." + ("" if projetos else " " + SEM_PROJETO))
+
+
 def _lembrar_vinculo(arquivo: str, projeto_id: str, nome: str) -> None:
     if not arquivo:
         return
@@ -164,6 +190,12 @@ def status() -> dict:
         saida["autocad"] = {"erro": str(e)}
     try:
         saida["conexao"] = backend.eu()
+        autocad_ = saida.get("autocad") or {}
+        vinculo = autocad_.get("vinculo") or saida.get("vinculoLembrado")
+        if isinstance(vinculo, dict) and vinculo.get("projetoId"):
+            projetos = backend.projetos()
+            if not any(p["projetoId"] == vinculo["projetoId"] for p in projetos):
+                saida["vinculoPerdido"] = _vinculo_perdido(vinculo, projetos)
     except Exception as e:
         saida["conexao"] = {"erro": str(e)}
     saida.update(_com_aviso_de_versao())
@@ -182,6 +214,8 @@ def diagnosticar() -> dict:
         "pastas": {"base": str(pasta()), "lisp": str(pasta_lisp()), "ipc": str(pasta_ipc()),
                    "lispExiste": (pasta_lisp() / "prancha_ok.lsp").exists()},
         "instalacao": ler_estado().get("instalacao"),
+        "pastaDoServidor": instalacao.ORIGEM,
+        "outrosConectores": instalacao.outros_servidores(),
     }
     try:
         janela = autocad._janela_autocad()
@@ -322,18 +356,40 @@ def _linha_resumo(item: dict, rotulos: dict, detalhe: bool, *, texto: bool = Tru
     return saida
 
 
+def _cadastral(item: dict) -> bool:
+    """Documento do processo (RGI, ART, taxa...), não do projeto: fica à parte, como no site (setor "cadastro" ou
+    pergunta sem condição; web: lib/organizarParecer.ts)."""
+    return not item.get("aguardaGatilho") and (item.get("setor") == "cadastro" or item["situacao"] == "pergunta")
+
+
 def _contagem(p: dict, itens: list[dict]) -> dict:
+    """A conta como o site: por item (as linhas de cada cômodo contam uma vez), e fechando. Pente fino de
+    04/10/2026, sugestão 1: "235 itens conferidos, 145 valem para este projeto, mas as abas somavam 106" (os 39
+    cadastrais, à parte, não estavam na conta)."""
+    por_item: dict[str, dict] = {}
+    for i in itens:
+        chave = i.get("idRegra") or f"linha-{i['ordem']}"
+        por_item.setdefault(chave, i)
+
     def n(situacao):
-        return sum(1 for i in itens if i["situacao"] == situacao)
+        return sum(1 for i in por_item.values() if i["situacao"] == situacao and not _cadastral(i))
 
     contagem = {"erros": n("errado"), "duvidas": n("duvida"), "perguntas": n("pergunta"),
-                "conferirAMao": n("conferir_a_mao"), "atendidos": n("atendido"), "dispensados": n("dispensado")}
-    # Pareceres da rodada 2 podem trazer a contagem do catálogo: quantos itens não se aplicam
-    # a este projeto (não viram linha) e o total conferido.
+                "conferirAMao": n("conferir_a_mao"), "atendidos": n("atendido"), "dispensados": n("dispensado"),
+                "cadastrais": sum(1 for i in por_item.values() if _cadastral(i))}
+    valem = len(por_item)
+    contagem["valemParaEsteProjeto"] = valem
+    # Pareceres da rodada 2 trazem a contagem do catálogo: quantos itens não se aplicam a este projeto (não viram
+    # linha) e o total conferido.
     catalogo = (p.get("contagem") or {}).get("catalogo") if isinstance(p.get("contagem"), dict) else None
+    cadastrais = contagem["cadastrais"]
+    explicacao = f"{valem} itens valem para este projeto: {valem - cadastrais} na análise técnica e " \
+                 f"{cadastrais} {'cadastral' if cadastrais == 1 else 'cadastrais'} (documentos do processo, à parte)"
     if isinstance(catalogo, dict) and "naoSeAplica" in catalogo:
         contagem["naoSeAplicam"] = catalogo["naoSeAplica"]
         contagem["itensConferidos"] = catalogo.get("total")
+        explicacao += f"; {catalogo['naoSeAplica']} não se aplicam; {catalogo.get('total')} conferidos ao todo"
+    contagem["comoFecha"] = explicacao + ". Custos estimados à parte, fora dessa conta."
     return contagem
 
 
@@ -440,16 +496,6 @@ def _resumo(p: dict, detalhe: bool = False) -> dict:
 MAXIMO_PARECERES_COM_MEDIDAS = 20
 
 
-def _medidas_confirmadas(medicao: dict | None, arquivo: str, respostas: dict[str, float]) -> dict:
-    """{campo: {valor, handles}} das respostas que são a medida de `medir_prancha` deste
-    desenho, sem mudar o valor (a pessoa pode ter corrigido: aí o lugar não é o medido)."""
-    if not medicao or str(medicao.get("arquivo") or "").lower() != arquivo.lower():
-        return {}
-    medidas_ = medicao.get("medidas") or {}
-    return {campo: medidas_[campo] for campo, valor in respostas.items()
-            if isinstance(medidas_.get(campo), dict) and abs(float(medidas_[campo]["valor"]) - float(valor)) < 0.005}
-
-
 def _guardar_medidas(parecer_id: str, confirmadas: dict) -> None:
     if not confirmadas:
         return
@@ -464,27 +510,19 @@ def _medidas_do_parecer(parecer_id: str) -> dict:
 
 @mcp.tool()
 def medir_prancha(unidade: str = "m") -> dict:
-    """Mede no desenho aberto, antes do parecer, o que ele costuma pedir: terreno (área, lados,
-    testada), área de projeção, afastamentos, pavimentos, altura, áreas por pavimento e vagas.
-    Devolve uma PROPOSTA, cada valor com o campo, como foi medido e os handles. Mostre à pessoa
-    e envie só o que ela confirmar, em `enviar_prancha(respostas={campo: valor})`. `unidade`:
-    a do desenho ("m", "cm" ou "mm"); pergunte se o resultado vier com aviso de unidade."""
+    """Opcional: mede no desenho aberto, pelo AutoCAD, terreno (área, lados, testada), área de
+    projeção, afastamentos, pavimentos, altura, áreas por pavimento e vagas. As medidas que valem
+    são as que o Prancha Ok lê da prancha (a prévia de `enviar_prancha`); esta medição serve para
+    comparar quando a pessoa duvida de uma delas, ou para responder uma pergunta da prévia (com o sim
+    dela). Devolve uma PROPOSTA, cada valor com como foi medido e os handles. `unidade`: a do desenho
+    ("m", "cm" ou "mm"); pergunte se o resultado vier com aviso de unidade."""
     try:
-        desenho = autocad.info()
-        resultado = medidas.medir(autocad.ler_entidades(), unidade)
-        gravar_estado(medicao={
-            "arquivo": desenho.get("arquivo") or "",
-            "medidas": {p["campo"]: {"valor": p["valor"], "handles": p["handles"]}
-                        for p in resultado["propostas"] if p.get("campo")},
-        })
         return {
             "ok": True,
-            **resultado,
-            "comoUsar": "Proposta, não medida oficial: mostre numa lista com letras (A, B, C...) cada valor com o "
-                        "\"como\" e peça a resposta em bloco: \"tudo certo\", \"tudo certo menos B e D\", \"só A e C "
-                        "estão certos\" ou \"vou responder um a um\". Envie só os confirmados (ou corrigidos pela "
-                        "pessoa) em enviar_prancha(respostas={campo: valor}). Divergência entre o quadro e o "
-                        "desenho: a pessoa escolhe.",
+            **medidas.medir(autocad.ler_entidades(), unidade),
+            "comoUsar": "Proposta, não medida oficial: mostre cada valor com o \"como\". Para corrigir uma medida "
+                        "ou responder uma pergunta da prévia com um destes valores, só com o sim da pessoa, em "
+                        "confirmar_previa. Divergência entre o quadro e o desenho: a pessoa escolhe.",
         }
     except Exception as e:
         return _erro(e)
@@ -507,6 +545,8 @@ def _esperar(parecer_id: str, ate: float) -> dict:
 
 
 def _com_espera(p: dict, detalhe: bool) -> dict:
+    if p["status"] == "aguardando_medidas":
+        return _previa(p)
     resumo = _resumo(p, detalhe)
     if p["status"] == "processando":
         resumo["mensagem"] = ("Ainda processando (costuma levar de 20 s a 2 min). Chame `ver_parecer` com "
@@ -520,16 +560,6 @@ def _tipo_do_desenho(arquivo: Path) -> str:
     if tipo not in ("dwg", "dxf"):
         raise ValueError(f"O Prancha Ok lê DWG e DXF; o desenho aberto é {arquivo.name}.")
     return tipo
-
-
-def _falta_medir(medicao: dict | None, arquivo: str, respostas: dict[str, float], sem_medir: bool) -> bool:
-    """O envio sem `medir_prancha` deste desenho e sem nenhuma medida confirmada para: o parecer só
-    sai depois de a pessoa ver as medidas (observações do especialista de 02/10/2026, item 1: o
-    primeiro parecer da prancha real 02 saiu sem medida nenhuma). `sem_medir`: a pessoa disse que
-    não quer conferir."""
-    if sem_medir or respostas:
-        return False
-    return not medicao or str(medicao.get("arquivo") or "").lower() != arquivo.lower()
 
 
 # O parecer que já tem itens para marcar (processando, falhou e recusado não têm).
@@ -554,7 +584,7 @@ def _com_marcas(resumo: dict, parecer_id: str, status: str, marcar: bool) -> dic
 
 
 def _respostas_numericas(respostas: dict | None) -> dict[str, float]:
-    """As medidas confirmadas, como números (o envio só aceita número)."""
+    """As medidas confirmadas, como números (a confirmação só aceita número)."""
     saida = {}
     for campo, valor in (respostas or {}).items():
         if isinstance(valor, bool) or not isinstance(valor, (int, float)) or not math.isfinite(valor):
@@ -563,19 +593,86 @@ def _respostas_numericas(respostas: dict | None) -> dict[str, float]:
     return saida
 
 
+def _letra(n: int) -> str:
+    """A, B, ..., Z, AA, AB...: a letra da medida na lista da prévia."""
+    letras = ""
+    n += 1
+    while n:
+        n, resto = divmod(n - 1, 26)
+        letras = chr(65 + resto) + letras
+    return letras
+
+
+def _numero_br(valor: float, unidade: str) -> str:
+    if not unidade:
+        return str(int(valor)) if float(valor).is_integer() else f"{valor}".replace(".", ",")
+    return f"{valor:.2f}".replace(".", ",") + f" {unidade}"
+
+
+def _previa(p: dict) -> dict:
+    """O parecer esperando a conferência (a prévia do 1º parecer, 0.4.0): as medidas que o motor leu, com letras,
+    e as perguntas que o parecer faria, numeradas. Pente fino de 04/10/2026, item B: antes, o 1º parecer saía só
+    com as medidas e as respostas abriam o nº 2."""
+    previa = p.get("previa") or {}
+    medidas = [{"letra": _letra(i), "campo": m["campo"], "medida": m["rotulo"],
+                "valor": _numero_br(m["valor"], m["unidade"]), "numero": m["valor"],
+                "deOndeSaiu": m["onde"]["local"] + (f": \"{m['onde']['trecho']}\"" if m["onde"].get("trecho") else "")}
+               for i, m in enumerate(previa.get("medidas") or [])]
+    perguntas = [{"numero": i + 1, "campo": q["campo"], "pergunta": q["rotulo"], "tipo": q["tipo"],
+                  **({"opcoes": q["opcoes"]} if q.get("opcoes") else {}), "decide": q.get("itens") or []}
+                 for i, q in enumerate(previa.get("perguntas") or [])]
+    terreno = previa.get("terreno") if isinstance(previa.get("terreno"), dict) else None
+    extra = {}
+    if terreno and not terreno.get("conferido"):
+        # Foto F3 do pente fino de 04/10/2026: "essa conferência, que considero importantíssima [...] o ideal seria
+        # esses valores serem conferidos pelo usuário também antes do 1º parecer". A conferência lado a lado é no site.
+        extra["terreno"] = {
+            "conferido": False,
+            "url": terreno.get("url"),
+            "mensagem": "O terreno conforme o RGI (lados, testada, área, esquina) ainda não foi conferido neste projeto. "
+                        "Ele vale mais que a prancha. Sugira conferir no site antes de confirmar a prévia"
+                        + (f" ({terreno['url']})" if terreno.get("url") else "")
+                        + "; o que for conferido lá entra neste parecer. A pessoa pode seguir sem.",
+        }
+    return {
+        **extra,
+        "ok": True,
+        "previa": True,
+        "parecerId": p["parecerId"],
+        "numero": p["numero"],
+        "situacao": SITUACAO["aguardando_medidas"],
+        "arquivo": p["nomeArquivo"],
+        "url": p["url"],
+        "medidas": medidas,
+        "perguntas": perguntas,
+        "comoUsar": "Antes do parecer, mostre as medidas lidas numa lista com letras (cada uma com de onde saiu) e as "
+                    "perguntas numeradas (com as opções), e peça a resposta em bloco: \"tudo certo\", \"tudo certo "
+                    "menos B e D\", \"só A e C estão certos\", \"1 sim, 2 2,50\" ou \"vou responder um a um\". Depois "
+                    "chame confirmar_previa(valores={campo: número} só das medidas confirmadas ou corrigidas, "
+                    "respostas={campo: valor} das perguntas respondidas: número sem unidade, ou uma das opções). O "
+                    "que ficar sem resposta o parecer pergunta de novo. Sai um parecer só, com tudo.",
+    }
+
+
+def _guardar_medidas_da_previa(parecer_id: str, previa: dict, valores: dict[str, float]) -> None:
+    """O lugar das medidas confirmadas como lidas (os handles do motor), para a nuvem do valor informado achar de
+    onde ele saiu (marcas.com_lugar_medido). Corrigida pela pessoa: o lugar não é o lido."""
+    lidas = {m["campo"]: m for m in previa.get("medidas") or []}
+    _guardar_medidas(parecer_id, {
+        campo: {"valor": valor, "handles": lidas[campo].get("handles") or []}
+        for campo, valor in valores.items()
+        if campo in lidas and abs(float(lidas[campo]["valor"]) - float(valor)) < 0.005})
+
+
 @mcp.tool()
 def enviar_prancha(projeto_id: str | None = None, compartilhar_prancha: bool = False, salvar: bool = False,
-                   respostas: dict[str, float] | None = None, sem_medir: bool = False, marcar: bool = True) -> dict:
+                   marcar: bool = True) -> dict:
     """Envia o desenho aberto, DWG ou DXF (como está salvo no disco), para um parecer novo no
     projeto vinculado (ou em `projeto_id`). Com DWG vai junto a leitura que o próprio AutoCAD
-    faz do desenho (o Prancha Ok compara as duas; onde divergem, o item vira dúvida). Espera o
-    parecer por até ~50 s no total.
-
-    `respostas`: {campo: valor} das medidas de `medir_prancha` que a pessoa confirmou (ou
-    corrigiu); entram já neste parecer. Nunca mande proposta sem o sim dela. Sem `medir_prancha`
-    deste desenho e sem respostas, o envio para e pede a medição; `sem_medir=true` só se a pessoa
-    disser que não quer conferir as medidas.
-    `marcar`: com o parecer pronto, já marca no desenho (como `marcar_parecer`).
+    faz do desenho (o Prancha Ok compara as duas; onde divergem, o item vira dúvida). Espera a
+    leitura por até ~50 s no total e devolve a PRÉVIA: as medidas lidas e as perguntas que o
+    parecer faria, para a pessoa conferir e responder; depois, `confirmar_previa` gera o parecer.
+    Sem nada para conferir, o parecer já sai (e é marcado no desenho se `marcar`).
     `salvar`: salva o desenho (QSAVE) antes de enviar, se houver alteração não salva (inclusive
     as marcas e o vínculo, que o próprio MCP grava). Só com o "sim" da pessoa, perguntado uma vez.
     `compartilhar_prancha`: só com a permissão explícita da pessoa (pergunte uma vez). Deixa a
@@ -596,16 +693,14 @@ def enviar_prancha(projeto_id: str | None = None, compartilhar_prancha: bool = F
                 return {"ok": False, "erro": "O AutoCAD não salvou o desenho (há alguma janela aberta nele?)."}
         arquivo = Path(desenho["arquivo"])
         tipo = _tipo_do_desenho(arquivo)
-        confirmadas = _respostas_numericas(respostas)
-        if _falta_medir(ler_estado().get("medicao"), desenho["arquivo"], confirmadas, sem_medir):
-            return {"ok": False, "precisaMedir": True,
-                    "erro": "Antes do parecer, meça: chame medir_prancha, mostre as medidas à pessoa numa lista com "
-                            "letras e envie com respostas={campo: valor} só o que ela confirmar ou corrigir. Se ela "
-                            "não quiser conferir as medidas, chame de novo com sem_medir=true."}
         vinculo = desenho.get("vinculo") or _vinculo_lembrado(desenho["arquivo"]) or {}
         projeto = projeto_id or vinculo.get("projetoId")
+        projetos = backend.projetos()
+        if projeto and not projeto_id and not any(p["projetoId"] == projeto for p in projetos):
+            _esquecer_vinculo(desenho["arquivo"])
+            return {"ok": False, "vinculoPerdido": True, "projetos": projetos,
+                    "erro": _vinculo_perdido(vinculo, projetos)}
         if not projeto:
-            projetos = backend.projetos()
             if not projetos:
                 return {"ok": False, "projetos": [], "erro": SEM_PROJETO}
             if len(projetos) == 1:
@@ -625,23 +720,54 @@ def enviar_prancha(projeto_id: str | None = None, compartilhar_prancha: bool = F
             except AutocadIndisponivel as e:
                 # Sem a segunda leitura o parecer sai igual ao da web: não é motivo para não enviar.
                 aviso = f"Enviado sem a leitura do AutoCAD ({e})."
-        aberto = backend.enviar_prancha(projeto, arquivo, leitura, compartilhar_prancha, confirmadas)
+        aberto = backend.enviar_prancha(projeto, arquivo, leitura, compartilhar_prancha)
         gravar_estado(ultimoParecer=aberto["parecerId"])
-        _guardar_medidas(aberto["parecerId"],
-                         _medidas_confirmadas(ler_estado().get("medicao"), desenho["arquivo"], confirmadas))
-        nome = vinculo.get("projeto") or next((p["nome"] for p in backend.projetos() if p["projetoId"] == projeto),
-                                              projeto)
+        nome = next((p["nome"] for p in projetos if p["projetoId"] == projeto), vinculo.get("projeto") or projeto)
         _lembrar_vinculo(desenho["arquivo"], projeto, nome)
-        pronto = _esperar(aberto["parecerId"], inicio + PRAZO_PARECER_S)
-        resumo = _com_marcas(_com_espera(pronto, detalhe=False), aberto["parecerId"], pronto["status"], marcar)
+        lido = _esperar(aberto["parecerId"], inicio + PRAZO_PARECER_S)
+        if lido["status"] == "aguardando_medidas":
+            previa = lido.get("previa") or {}
+            if previa.get("medidas") or previa.get("perguntas"):
+                resposta = _previa(lido)
+                return {**resposta, "aviso": aviso} if aviso else resposta
+            # Nada a conferir nem a perguntar: o parecer sai direto.
+            backend.confirmar(aberto["parecerId"], {}, {})
+            lido = _esperar(aberto["parecerId"], inicio + PRAZO_PARECER_S)
+        resumo = _com_marcas(_com_espera(lido, detalhe=False), aberto["parecerId"], lido["status"], marcar)
         return {**resumo, "aviso": aviso} if aviso else resumo
     except ErroBackend as e:
         if e.codigo == "PARECER_EM_PROCESSAMENTO":
             return {"ok": False, "erro": "Ainda há um parecer processando neste projeto. Espere ele terminar "
                                          "(`ver_parecer` com aguardar=true) e envie de novo."}
+        return {"ok": False, "erro": f"{e}"}
+    except Exception as e:
+        return _erro(e)
+
+
+@mcp.tool()
+def confirmar_previa(valores: dict[str, float] | None = None, respostas: dict[str, str | float] | None = None,
+                     parecer_id: str | None = None, marcar: bool = True) -> dict:
+    """Confirma a prévia do parecer (o último enviado deste computador, se não disser qual) e gera o parecer com
+    tudo. `valores`: {campo: número} só das medidas da prévia que a pessoa confirmou (o valor lido) ou corrigiu (o
+    dela); a não conferida não vai e fica como foi lida. `respostas`: {campo: valor} das perguntas da prévia que
+    ela respondeu (número sem unidade, ou uma das opções). Nunca mande sem o sim dela. Espera o parecer por até
+    ~50 s e, pronto, marca no desenho (`marcar`)."""
+    inicio = time.monotonic()
+    try:
+        pid = _parecer_id(parecer_id)
+        antes = backend.parecer(pid)
+        if antes["status"] != "aguardando_medidas":
+            return {"ok": False, "erro": "Este parecer não está esperando a conferência: veja com `ver_parecer`."}
+        confirmadas = _respostas_numericas(valores)
+        backend.confirmar(pid, confirmadas, dict(respostas or {}))
+        _guardar_medidas_da_previa(pid, antes.get("previa") or {}, confirmadas)
+        pronto = _esperar(pid, inicio + PRAZO_PARECER_S)
+        return _com_marcas(_com_espera(pronto, detalhe=False), pid, pronto["status"], marcar)
+    except ErroBackend as e:
         explicacao = {
-            "CAMPO_NAO_PERMITIDO": "essa medida não vai no envio; mande só os campos de medir_prancha",
-            "VALOR_INVALIDO": "medida fora do formato (número de 0 a 10 milhões, sem unidade)",
+            "CAMPO_NAO_PERMITIDO": "esse campo não está na prévia; mande só as medidas e as perguntas dela",
+            "VALOR_INVALIDO": "valor fora do formato (número de 0 a 10 milhões, sem unidade, ou uma das opções)",
+            "PARECER_NAO_AGUARDA_MEDIDAS": "a prévia já foi confirmada",
         }.get(e.codigo)
         return {"ok": False, "erro": f"{e}" + (f": {explicacao}" if explicacao else "")}
     except Exception as e:
@@ -891,7 +1017,15 @@ def enviar_sugestao(texto: str, parecer_id: str | None = None, itens: list[dict]
         pid = parecer_id or ler_estado().get("ultimoParecer")
         if lista and not pid:
             return {"ok": False, "erro": "Para comentar itens, diga de qual parecer (parecer_id)."}
-        backend.sugestao(texto, pid, lista)
+        try:
+            backend.sugestao(texto, pid, lista)
+        except ErroBackend as e:
+            # O último parecer deste computador foi apagado no site (ou o projeto dele): a sugestão sem itens vai
+            # como geral (pente fino de 04/10/2026, sugestão 8: "sem projetos, devolve erro 404").
+            if e.codigo != "NAO_ENCONTRADO" or parecer_id or lista:
+                raise
+            gravar_estado(ultimoParecer=None)
+            backend.sugestao(texto, None, [])
         return {"ok": True, "mensagem": "Sugestão enviada à equipe do Prancha Ok, que lê cada uma. Obrigado."}
     except ErroBackend as e:
         explicacao = {

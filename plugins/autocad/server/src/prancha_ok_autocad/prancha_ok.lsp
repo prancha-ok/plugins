@@ -33,7 +33,7 @@
 ;;; não plotam e que o motor ignora) e no dicionário PRANCHAOK (vínculo com o
 ;;; projeto). Nunca altera o que o arquiteto desenhou.
 
-(setq *pok-versao* "0.3.4")
+(setq *pok-versao* "0.4.0")
 (setq *pok-camada* "PRANCHAOK-PARECER")
 (setq *pok-codificacao* nil)
 

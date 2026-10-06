@@ -1,3 +1,3 @@
 """MCP do Prancha Ok para o AutoCAD (docs/planos/autocad-mcp.md)."""
 
-__version__ = "0.3.4"
+__version__ = "0.4.0"
