@@ -6,7 +6,7 @@ cada item) e marca no desenho, com nuvens e chamadas numeradas, o que pede aten�
 numa camada própria (`PRANCHAOK-PARECER`) que não plota. O assistente **nunca altera** o
 que você desenhou.
 
-Versão 0.4.0. Precisa de:
+Versão 0.5.0. Precisa de:
 
 - Windows 10 ou 11;
 - AutoCAD 2024 ou mais novo, completo ou LT. Não funciona no GstarCAD, BricsCAD, ZWCAD e
@@ -24,7 +24,7 @@ confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
 
 ## Claude Desktop (extensão)
 
-1. Baixe a extensão: [prancha-ok-autocad-0.4.0.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.4.0.mcpb)
+1. Baixe a extensão: [prancha-ok-autocad-0.5.0.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.5.0.mcpb)
    (ou em [pranchaok.com.br/autocad](https://pranchaok.com.br/autocad)).
 2. Instale por dentro do Claude Desktop (não pela pasta de downloads: o Windows não conhece
    esse tipo de arquivo e pergunta com qual programa abrir). Clique no seu nome, no canto

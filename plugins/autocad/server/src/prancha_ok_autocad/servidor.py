@@ -8,7 +8,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from . import __version__, atualizacao, autocad, backend, chamadas, instalacao, marcas, medidas
+from . import __version__, atualizacao, autocad, backend, chamadas, instalacao, marcas, terreno
 from .autocad import AutocadIndisponivel
 from .backend import ErroBackend, NaoConectado
 from .locais import api, empacotado, gravar_estado, ler_estado, nome_maquina, pasta, pasta_ipc, pasta_lisp
@@ -22,11 +22,17 @@ compatíveis: nesses, a pessoa envia o desenho pelo site. O desenho aberto pode 
 Fluxo, sempre nesta ordem: `conectar` (uma vez por computador) -> `vincular_projeto` (uma vez por
 desenho) -> peça para salvar o desenho -> `enviar_prancha` -> o Prancha Ok lê a prancha e devolve a
 PRÉVIA: as medidas que leu (com letras: A, B, C...) e as perguntas que o parecer faria (numeradas:
-1, 2, 3...). Mostre as duas listas e peça a resposta em bloco: "tudo certo", "tudo certo menos B e
-D", "só A e C estão certos", "1 sim, 2 2,50 m" ou "vou responder um a um" -> `confirmar_previa` com
-as medidas confirmadas ou corrigidas e as respostas dadas -> sai um parecer só, já marcado no
-desenho (nuvens, chamadas e quadro-resumo; `marcar_parecer` marca de novo) -> o arquiteto corrige ou
-responde o que sobrou (`responder_itens`, que também marca) -> `enviar_prancha` de novo. Crítica ou
+1, 2, 3...). Se o terreno do projeto ainda não foi conferido e o lote está no desenho, a prévia traz
+os lados do lote e o desenho ganha a letra e a medida de cada lado (verde: os que parecem dar para a
+rua): pergunte quais lados dão para a rua e qual área vale (a da matrícula, se o RGI e a prancha
+não batem) e chame `conferir_terreno(ruas=[...], area_m2=...)` antes de confirmar. Mostre as listas
+e peça a resposta em bloco: "tudo certo", "tudo certo menos B e D", "só A e C estão certos", "1 sim,
+2 2,50 m" ou "vou responder um a um" -> `confirmar_previa` com as medidas confirmadas ou corrigidas e
+as respostas dadas -> sai um parecer só, já marcado no desenho (nuvens, chamadas e quadro-resumo;
+`marcar_parecer` marca de novo) -> o arquiteto corrige ou responde o que sobrou (`responder_itens`,
+que também marca) -> `enviar_prancha` de novo. Mudou uma medida ou resposta da prévia depois do
+parecer: `rever_medidas` (gera o parecer seguinte só com o que mudou). O terreno se confere ou se revê
+a qualquer momento com `conferir_terreno` (sem argumentos, escreve as letras no desenho). Crítica ou
 falso apontamento que a pessoa contar: `enviar_sugestao`. Se algo não funcionar: `diagnosticar`.
 
 O parecer traz só o que vale para este projeto (o que não se aplica fica de fora, só contado):
@@ -50,8 +56,10 @@ Regras:
   com `responder_itens`.
 - Medidas: as da prévia são o que o Prancha Ok LEU da prancha. Mostre cada valor com de onde saiu e
   mande em `confirmar_previa` só as que a pessoa confirmou ou corrigiu: o valor é declarado por ela.
-  `medir_prancha` (medição no AutoCAD) é opcional: serve para comparar quando a pessoa duvida de uma
-  medida lida; nunca mande a medição sem o sim dela.
+  As medidas são as do Prancha Ok (as mesmas do site); se a pessoa duvidar de uma, ela confere no
+  desenho e diz o valor certo. `ler_desenho` ajuda a investigar, nunca a mandar valor sem o sim dela.
+- Terreno: quem diz quais lados dão para a rua é a pessoa; a posição de cada lado (frente, laterais,
+  fundos) o Prancha Ok calcula pelo desenho. Mostre o resultado e pergunte se está certo.
 - Salvar o desenho (`enviar_prancha` com salvar=true) só com o "sim" da pessoa, perguntado uma vez.
 - Custos estimados são estimativas: o valor final é da Prefeitura. Cite a lei de cada um.
 - Prancha não reconhecida (`recusada`): o Prancha Ok não conferiu nada porque o desenho não parece
@@ -490,7 +498,7 @@ def _resumo(p: dict, detalhe: bool = False) -> dict:
     return saida
 
 
-# ---------------------------------------------------------------- medir antes do parecer
+# ---------------------------------------------------------------- a prévia e as medidas confirmadas
 
 # Medidas confirmadas guardadas por parecer (para a nuvem achar o lugar do valor informado).
 MAXIMO_PARECERES_COM_MEDIDAS = 20
@@ -506,26 +514,6 @@ def _guardar_medidas(parecer_id: str, confirmadas: dict) -> None:
 
 def _medidas_do_parecer(parecer_id: str) -> dict:
     return (ler_estado().get("medidasConfirmadas") or {}).get(parecer_id) or {}
-
-
-@mcp.tool()
-def medir_prancha(unidade: str = "m") -> dict:
-    """Opcional: mede no desenho aberto, pelo AutoCAD, terreno (área, lados, testada), área de
-    projeção, afastamentos, pavimentos, altura, áreas por pavimento e vagas. As medidas que valem
-    são as que o Prancha Ok lê da prancha (a prévia de `enviar_prancha`); esta medição serve para
-    comparar quando a pessoa duvida de uma delas, ou para responder uma pergunta da prévia (com o sim
-    dela). Devolve uma PROPOSTA, cada valor com como foi medido e os handles. `unidade`: a do desenho
-    ("m", "cm" ou "mm"); pergunte se o resultado vier com aviso de unidade."""
-    try:
-        return {
-            "ok": True,
-            **medidas.medir(autocad.ler_entidades(), unidade),
-            "comoUsar": "Proposta, não medida oficial: mostre cada valor com o \"como\". Para corrigir uma medida "
-                        "ou responder uma pergunta da prévia com um destes valores, só com o sim da pessoa, em "
-                        "confirmar_previa. Divergência entre o quadro e o desenho: a pessoa escolhe.",
-        }
-    except Exception as e:
-        return _erro(e)
 
 
 def _parecer_id(parecer_id: str | None) -> str:
@@ -622,8 +610,19 @@ def _previa(p: dict) -> dict:
                   **({"opcoes": q["opcoes"]} if q.get("opcoes") else {}), "decide": q.get("itens") or []}
                  for i, q in enumerate(previa.get("perguntas") or [])]
     terreno = previa.get("terreno") if isinstance(previa.get("terreno"), dict) else None
+    no_desenho = p.get("terrenoNoDesenho")
     extra = {}
-    if terreno and not terreno.get("conferido"):
+    if no_desenho and not no_desenho.get("conferido"):
+        # 0.5.0: o terreno pelo desenho, como no site (os lados de rua clicados na prancha).
+        extra["terreno"] = {
+            **terreno_para_chat(no_desenho),
+            "mensagem": "O terreno deste projeto ainda não foi conferido. O desenho ganhou a letra e a medida de cada "
+                        "lado do lote (verde: os que parecem dar para a rua). Antes de confirmar a prévia, pergunte "
+                        "quais lados dão para a rua e qual área vale (a da matrícula, se não batem) e chame "
+                        "conferir_terreno(ruas=[letras], area_m2=número). O terreno conferido vale mais que a prancha "
+                        "e entra neste parecer. A pessoa pode seguir sem.",
+        }
+    elif terreno and not terreno.get("conferido"):
         # Foto F3 do pente fino de 04/10/2026: "essa conferência, que considero importantíssima [...] o ideal seria
         # esses valores serem conferidos pelo usuário também antes do 1º parecer". A conferência lado a lado é no site.
         extra["terreno"] = {
@@ -652,6 +651,21 @@ def _previa(p: dict) -> dict:
                     "respostas={campo: valor} das perguntas respondidas: número sem unidade, ou uma das opções). O "
                     "que ficar sem resposta o parecer pergunta de novo. Sai um parecer só, com tudo.",
     }
+
+
+def terreno_para_chat(t: dict) -> dict:
+    return terreno.para_o_chat(t)
+
+
+def _escrever_lados(t: dict) -> dict:
+    """As letras dos lados do lote no desenho, no lugar das marcas que havia (as letras de antes e, com o parecer
+    pronto, as nuvens: `marcar_parecer` as traz de volta); falha vira aviso (o terreno ainda se confere pelo chat)."""
+    try:
+        autocad.limpar()
+        feito = autocad.marcar_chamadas(terreno.chamadas_dos_lados(t["lados"]))
+        return {"ok": True, "escritos": len(feito.get("marcadas") or [])}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{e}"}
 
 
 def _guardar_medidas_da_previa(parecer_id: str, previa: dict, valores: dict[str, float]) -> None:
@@ -727,8 +741,12 @@ def enviar_prancha(projeto_id: str | None = None, compartilhar_prancha: bool = F
         lido = _esperar(aberto["parecerId"], inicio + PRAZO_PARECER_S)
         if lido["status"] == "aguardando_medidas":
             previa = lido.get("previa") or {}
-            if previa.get("medidas") or previa.get("perguntas"):
+            no_desenho = lido.get("terrenoNoDesenho")
+            terreno_aberto = bool(no_desenho) and not no_desenho.get("conferido")
+            if previa.get("medidas") or previa.get("perguntas") or terreno_aberto:
                 resposta = _previa(lido)
+                if terreno_aberto:
+                    resposta["terreno"]["noDesenho"] = _escrever_lados(no_desenho)
                 return {**resposta, "aviso": aviso} if aviso else resposta
             # Nada a conferir nem a perguntar: o parecer sai direto.
             backend.confirmar(aberto["parecerId"], {}, {})
@@ -758,16 +776,119 @@ def confirmar_previa(valores: dict[str, float] | None = None, respostas: dict[st
         antes = backend.parecer(pid)
         if antes["status"] != "aguardando_medidas":
             return {"ok": False, "erro": "Este parecer não está esperando a conferência: veja com `ver_parecer`."}
-        confirmadas = _respostas_numericas(valores)
+        # Só as medidas que a prévia ainda pede: o terreno conferido nesse meio tempo (conferir_terreno) tira a área e a
+        # testada da lista, e mandá-las faria o backend recusar a confirmação inteira.
+        na_previa = {m["campo"] for m in (antes.get("previa") or {}).get("medidas") or []}
+        todas = _respostas_numericas(valores)
+        confirmadas = {campo: v for campo, v in todas.items() if campo in na_previa}
+        cobertas = sorted(set(todas) - set(confirmadas))
         backend.confirmar(pid, confirmadas, dict(respostas or {}))
         _guardar_medidas_da_previa(pid, antes.get("previa") or {}, confirmadas)
         pronto = _esperar(pid, inicio + PRAZO_PARECER_S)
-        return _com_marcas(_com_espera(pronto, detalhe=False), pid, pronto["status"], marcar)
+        resumo = _com_marcas(_com_espera(pronto, detalhe=False), pid, pronto["status"], marcar)
+        if cobertas:
+            resumo = {**resumo, "medidasDoTerreno": cobertas,
+                      "notaDoTerreno": "Estas medidas não foram mandadas: o terreno conferido já as diz."}
+        return resumo
     except ErroBackend as e:
         explicacao = {
             "CAMPO_NAO_PERMITIDO": "esse campo não está na prévia; mande só as medidas e as perguntas dela",
             "VALOR_INVALIDO": "valor fora do formato (número de 0 a 10 milhões, sem unidade, ou uma das opções)",
             "PARECER_NAO_AGUARDA_MEDIDAS": "a prévia já foi confirmada",
+        }.get(e.codigo)
+        return {"ok": False, "erro": f"{e}" + (f": {explicacao}" if explicacao else "")}
+    except Exception as e:
+        return _erro(e)
+
+
+@mcp.tool()
+def conferir_terreno(ruas: list[str] | None = None, area_m2: float | None = None,
+                     parecer_id: str | None = None) -> dict:
+    """O terreno do projeto pelo desenho (0.5.0), como no site. Sem `ruas`: escreve no desenho a letra e a medida de
+    cada lado do lote (camada PRANCHAOK-PARECER; verde os que parecem dar para a rua) e devolve os lados e as áreas
+    conhecidas, para perguntar à pessoa. Com `ruas` (as letras dos lados que dão para a rua, ditas por ela) e
+    `area_m2` (a área que vale; sem ela, a já conferida, a do RGI, a do IPTU ou a da prancha): grava o terreno
+    conferido, com a posição de cada lado calculada pelo desenho (frente, laterais, fundos), e devolve o resultado
+    para mostrar. Vale para a prévia em espera e para os próximos pareceres. Nunca grave sem o sim da pessoa."""
+    try:
+        pid = _parecer_id(parecer_id)
+        if ruas is None:
+            p = backend.parecer(pid)
+            t = p.get("terrenoNoDesenho")
+            if not t:
+                return {"ok": False, "url": p.get("url"),
+                        "erro": "Este parecer não tem o lote da planta de situação com os lados (prancha em PDF, lote "
+                                "não reconhecido ou parecer de antes da versão 0.5.0). Confira o terreno no site."}
+            return {"ok": True, **terreno.para_o_chat(t), "noDesenho": _escrever_lados(t),
+                    "comoUsar": "Mostre os lados (letra e medida) e pergunte quais dão para a rua (os verdes são a "
+                                "sugestão) e qual área vale. Depois chame conferir_terreno(ruas=[...], area_m2=...). "
+                                "As letras ficaram no lugar das marcas do parecer; marcar_parecer as traz de volta."}
+        if area_m2 is not None and (isinstance(area_m2, bool) or not math.isfinite(area_m2) or area_m2 <= 0):
+            return {"ok": False, "erro": "A área precisa ser um número maior que zero, em m²."}
+        feito = backend.terreno(pid, [str(r) for r in ruas], area_m2)
+        # As letras de novo, com o verde nas ruas que valem agora.
+        p = backend.parecer(pid)
+        t = p.get("terrenoNoDesenho")
+        redesenho = _escrever_lados(t) if t else None
+        return {"ok": True, **feito, **({"noDesenho": redesenho} if redesenho else {}),
+                "mensagem": "Terreno conferido. Mostre a posição de cada lado (frente, laterais, fundos) e a testada, "
+                            "e pergunte se está certo; se não, chame de novo com outras ruas. A prévia em espera e os "
+                            "próximos pareceres usam este terreno."}
+    except ErroBackend as e:
+        explicacao = {
+            "TERRENO_LADO_INEXISTENTE": "essa letra não é de um lado do lote",
+            "TERRENO_UMA_FRENTE": "diga pelo menos um lado que dá para a rua",
+            "TERRENO_SEM_DESENHO": "este parecer não tem o lote com os lados; confira no site",
+        }.get(e.codigo)
+        return {"ok": False, "erro": f"{e}" + (f": {explicacao}" if explicacao else "")}
+    except Exception as e:
+        return _erro(e)
+
+
+@mcp.tool()
+def rever_medidas(valores: dict[str, float] | None = None, respostas: dict[str, str | float] | None = None,
+                  parecer_id: str | None = None, marcar: bool = True) -> dict:
+    """Depois do parecer pronto (0.5.0): sem argumentos, devolve a conferência que foi a ele (as medidas lidas com o
+    valor confirmado ou corrigido, e as perguntas da prévia com as respostas), para mostrar à pessoa. Com `valores`
+    ({campo: número}, também das medidas que ficaram sem conferir) e/ou `respostas` ({campo: valor} das perguntas da
+    prévia): gera o parecer seguinte da mesma prancha só com o que mudou (o anterior fica como está), espera e marca
+    no desenho (`marcar`). Só mande o que a pessoa disse ou confirmou."""
+    inicio = time.monotonic()
+    try:
+        pid = _parecer_id(parecer_id)
+        antes = backend.parecer(pid)
+        if antes["status"] not in _PRONTOS:
+            return {"ok": False, "erro": "Só depois do parecer pronto (antes dele, use confirmar_previa)."}
+        conferencia = antes.get("conferencia")
+        if not conferencia:
+            return {"ok": False, "erro": "Este parecer não tem medidas nem perguntas da prévia para rever."}
+        if valores is None and respostas is None:
+            return {
+                "ok": True,
+                "parecerId": pid,
+                "numero": antes["numero"],
+                "medidas": [{"letra": _letra(i), "campo": m["campo"], "medida": m["rotulo"],
+                             "lida": _numero_br(m["valor"], m["unidade"]),
+                             "confirmada": None if m["confirmado"] is None else _numero_br(m["confirmado"], m["unidade"]),
+                             "deOndeSaiu": m["onde"]["local"]}
+                            for i, m in enumerate(conferencia["medidas"])],
+                "perguntas": [{"numero": i + 1, "campo": q["campo"], "pergunta": q["rotulo"],
+                               **({"opcoes": q["opcoes"]} if q.get("opcoes") else {}),
+                               "resposta": conferencia["respostas"].get(q["campo"])}
+                              for i, q in enumerate(conferencia["perguntas"])],
+                "comoUsar": "Mostre o que foi ao parecer e pergunte o que mudou. Depois chame rever_medidas(valores=..., "
+                            "respostas=...) só com o que mudou.",
+            }
+        novo = backend.rever(pid, _respostas_numericas(valores), dict(respostas or {}))
+        gravar_estado(ultimoParecer=novo["parecerId"])
+        pronto = _esperar(novo["parecerId"], inicio + PRAZO_PARECER_S)
+        return _com_marcas(_com_espera(pronto, detalhe=False), novo["parecerId"], pronto["status"], marcar)
+    except ErroBackend as e:
+        explicacao = {
+            "CAMPO_NAO_PERMITIDO": "esse campo não está entre as medidas e as perguntas da prévia",
+            "VALOR_INVALIDO": "valor fora do formato (número de 0 a 10 milhões, sem unidade, ou uma das opções)",
+            "NADA_INFORMADO": "nada mudou",
+            "PARECER_SEM_RESULTADO": "o parecer ainda não terminou",
         }.get(e.codigo)
         return {"ok": False, "erro": f"{e}" + (f": {explicacao}" if explicacao else "")}
     except Exception as e:

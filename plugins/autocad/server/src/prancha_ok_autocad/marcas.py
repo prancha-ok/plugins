@@ -144,7 +144,8 @@ def regiao_achada(regiao) -> dict | None:
 
 
 def com_lugar_medido(p: dict, medidas: dict | None) -> dict:
-    """O parecer com o lugar das medidas confirmadas antes do envio (`medir_prancha`, 0.3.0).
+    """O parecer com o lugar das medidas confirmadas na prévia (`confirmar_previa`; até a 0.4.0, também as do
+    `medir_prancha`).
     O backend não dá handle para o valor informado (o lugar no desenho não vale mais); quando o
     valor informado é o que o MCP mediu, o lugar é o de onde ele saiu. `medidas`:
     {campo: {valor, handles}} gravado no envio. Valor diferente (o terreno do RGI venceu a

@@ -125,6 +125,18 @@ def confirmar(parecer_id: str, valores: dict[str, float], respostas: dict[str, s
                         json={"valores": valores, "respostas": respostas})
 
 
+def terreno(parecer_id: str, ruas: list[str], area_m2: float | None) -> dict:
+    """O terreno conferido pelo desenho (0.5.0): as letras dos lados que dão para a rua e a área (None: a conferida, a do
+    RGI, a do IPTU ou a da prancha). {areaM2, testadaM, esquina, lados: [{letra, medidaM, posicao, rua}]}."""
+    return _autenticado("POST", f"/cliente/v1/pareceres/{parecer_id}/terreno", json={"ruas": ruas, "areaM2": area_m2})
+
+
+def rever(parecer_id: str, valores: dict[str, float], respostas: dict[str, str | float]) -> dict:
+    """Medidas e respostas da prévia revistas depois do parecer (0.5.0): parecer novo {parecerId, numero, url}."""
+    return _autenticado("POST", f"/cliente/v1/pareceres/{parecer_id}/rever",
+                        json={"valores": valores, "respostas": respostas})
+
+
 def responder(parecer_id: str, dados: dict, dispensas: list[dict]) -> dict:
     """Respostas às dúvidas (como o formulário da web): parecer novo {parecerId, numero, url}."""
     return _autenticado("POST", f"/cliente/v1/pareceres/{parecer_id}/respostas",

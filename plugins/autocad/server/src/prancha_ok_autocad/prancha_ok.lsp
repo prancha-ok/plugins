@@ -33,7 +33,7 @@
 ;;; não plotam e que o motor ignora) e no dicionário PRANCHAOK (vínculo com o
 ;;; projeto). Nunca altera o que o arquiteto desenhou.
 
-(setq *pok-versao* "0.4.0")
+(setq *pok-versao* "0.5.0")
 (setq *pok-camada* "PRANCHAOK-PARECER")
 (setq *pok-codificacao* nil)
 
@@ -315,7 +315,7 @@
      )
     )
     ;; 0.3.0: a SPLINE pelos pontos de ajuste (11) ou, sem eles, de controle (10): o lote da
-    ;; prancha real 01 tem lados em SPLINE, e o medir_prancha precisa fechar o contorno.
+    ;; prancha real 01 tem lados em SPLINE (a leitura vai ao Prancha Ok junto do envio).
     ((= tipo "SPLINE")
      (setq campos
        (append campos

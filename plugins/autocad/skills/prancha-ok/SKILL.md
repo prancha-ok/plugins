@@ -49,10 +49,15 @@ simples, sem termos de programação.
    número}` só das medidas que ela confirmou (o valor lido) ou corrigiu (o dela) e
    `respostas={campo: valor}` das perguntas que ela respondeu (número sem unidade, ou uma das
    opções). O que ficar sem resposta o parecer pergunta de novo. Sai um parecer só, já marcado.
-   Se a prévia trouxer `terreno` (o terreno conforme o RGI ainda não conferido), sugira conferir no
-   site, pelo link, antes de confirmar: lados, testada e área do RGI valem mais que a prancha.
-   Se a pessoa duvidar de uma medida lida, `medir_prancha` mede no AutoCAD para comparar (só
-   proposta; mande a medição só com o sim dela).
+   Se a prévia trouxer `terreno` (o terreno do projeto ainda não conferido), confira antes de
+   confirmar: o desenho ganhou a letra e a medida de cada lado do lote (verde: os que parecem dar
+   para a rua). Mostre os lados (`terreno.lados`) e as áreas conhecidas (`terreno.areas`: RGI,
+   IPTU, prancha), pergunte quais lados dão para a rua e qual área vale (a da matrícula, se não
+   batem) e chame `conferir_terreno(ruas=["A"], area_m2=600)`. Mostre a posição que o Prancha Ok
+   calculou para cada lado (frente, laterais, fundos) e a testada, e pergunte se está certo; se
+   não, chame de novo com outras ruas. Sem os lados no desenho (prancha em PDF ou lote não
+   reconhecido), a prévia traz o link do site. As medidas são as do Prancha Ok, as mesmas do site:
+   se a pessoa duvidar de uma, ela confere no desenho e diz o valor certo.
 5. **Ver o parecer.** Diga a situação e, em poucas linhas, o que está em desacordo, as dúvidas
    e as perguntas. Se ainda estiver processando, chame `ver_parecer` com `aguardar=true`.
    Para a lista inteira, `ver_parecer` com `detalhe=true`. O que o responsável já respondeu no
@@ -73,7 +78,11 @@ simples, sem termos de programação.
    valor e peça confirmação. Grave com `responder_itens`: números em metros ou m², sem
    unidade; opções como "sim", "não" ou "não se aplica". Ele gera um parecer novo, já marcado;
    mostre o que mudou.
-9. **Depois que o arquiteto corrigir**, volte ao passo 3 (envie de novo: o desenho mudou).
+9. **Mudou uma medida ou resposta da prévia depois do parecer** (a área de projeção estava errada,
+   na verdade há marquise): `rever_medidas` sem argumentos mostra o que foi ao parecer; com
+   `valores` e `respostas` só do que mudou, gera o parecer seguinte da mesma prancha, já marcado.
+   O terreno se revê com `conferir_terreno` (sem argumentos, as letras voltam ao desenho).
+10. **Depois que o arquiteto corrigir**, volte ao passo 3 (envie de novo: o desenho mudou).
 
 ## Críticas e falsos apontamentos
 
