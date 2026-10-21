@@ -29,11 +29,17 @@
 ;;; (`caixas`), decide toda a geometria (chamadas.py) e manda pronta
 ;;; (`chamadas`): aqui só se confere o formato e se desenha.
 ;;;
+;;; Desenho (0.6.0, decisão do David D5=c: "o MCP agora desenha"): `desenhar` recebe
+;;; entidades como DADOS (polilinha, linha, arco, texto, cota; uma por linha do pedido, lidas
+;;; com `read`) e cria cada uma com entmake, só em camadas PRANCHAOK-* (nunca a das
+;;; marcas), tudo num UNDO Begin/End: um desfazer volta tudo.
+;;;
 ;;; Escreve no desenho só na camada PRANCHAOK-PARECER (marcas do parecer, que
-;;; não plotam e que o motor ignora) e no dicionário PRANCHAOK (vínculo com o
-;;; projeto). Nunca altera o que o arquiteto desenhou.
+;;; não plotam e que o motor ignora), nas camadas PRANCHAOK-* do `desenhar` (quando a
+;;; pessoa pede) e no dicionário PRANCHAOK (vínculo com o projeto). Nunca apaga nem
+;;; altera o que o arquiteto desenhou.
 
-(setq *pok-versao* "0.5.0")
+(setq *pok-versao* "0.6.0")
 (setq *pok-camada* "PRANCHAOK-PARECER")
 (setq *pok-codificacao* nil)
 
@@ -748,6 +754,298 @@
   )
 )
 
+;; ---------------------------------------------------------------- desenhar (0.6.0)
+
+;; O pedido do `desenhar` (desenho.py): um item por linha, sempre dados.
+;;   ("se-vazio" camada)                      1º item, opcional: com algo nessa camada, não desenha nada
+;;   ("camada" nome cor tipo-de-linha [imprime])  cria a camada se ela não existe (a que existe fica como
+;;                                            está); imprime 0: a camada não plota (o padrão é plotar)
+;;   ("polilinha" camada fechada x y x y ...) fechada: 1 ou 0
+;;   ("linha" camada x1 y1 x2 y2 tipo)        tipo: "" (o da camada), "DASHED", "CONTINUOUS"...
+;;   ("arco" camada xc yc raio inicio fim)    ângulos em graus, anti-horário de inicio a fim (a folha da porta)
+;;   ("texto" camada x y altura giro alinhamento texto...)  giro em graus; "esquerda" ou "centro"
+;;   ("cota" camada x1 y1 x2 y2 xl yl texto...)  (xl yl): a ponta da linha de cota do lado de (x2 y2)
+;;   ("zoom" x0 y0 x1 y1)
+;;   ("+" ...)                                continua o item de cima (mais pontos, mais texto): a
+;;                                            linha do pedido não passa de 250 caracteres
+;; Só em camada PRANCHAOK-* que não seja a das marcas; o item torto ou de outra camada é contado e ignorado.
+
+(defun pok-num-p (x) (member (type x) '(INT REAL)))
+
+(defun pok-nums-p (l) (and l (vl-every 'pok-num-p l)))
+
+(defun pok-camada-desenho-p (nome)
+  (and (= (type nome) 'STR)
+       (wcmatch (strcase nome) "PRANCHAOK-*")
+       (/= (strcase nome) *pok-camada*))
+)
+
+(defun pok-pt (x y) (list (float x) (float y) 0.0))
+(defun pok-mais (p q) (mapcar '+ p q))
+(defun pok-menos (p q) (mapcar '- p q))
+(defun pok-vezes (p k) (mapcar '(lambda (c) (* c k)) p))
+
+;; Ângulo (radianos) para o texto nunca ficar de cabeça para baixo: de 90° a 270° gira meia volta.
+(defun pok-legivel (r / a)
+  (setq a (rem (+ (rem r (* 2 pi)) (* 2 pi)) (* 2 pi)))
+  (if (and (> a (/ pi 2)) (<= a (* 1.5 pi))) (- a pi) a)
+)
+
+;; O tipo de linha pronto para usar, ou nil (fica o da camada). CONTINUOUS sempre existe; DASHED, se o desenho
+;; não tem, é criado com o padrão do DXF do site (lib/dxfDoTerreno.ts: traço 1,0 e espaço 0,5, em metros), sem
+;; depender de achar o acad.lin (o LT tem outro arquivo); o DASHED que o desenho já tem fica como está.
+(defun pok-tipo-linha (nome / n)
+  (if (= (type nome) 'STR) (setq n (strcase nome)))
+  (cond
+    ((or (null n) (= n "")) nil)
+    ((= n "CONTINUOUS") "Continuous")
+    ((tblsearch "LTYPE" n) nome)
+    ((= n "DASHED")
+     (entmake (list (cons 0 "LTYPE") (cons 100 "AcDbSymbolTableRecord") (cons 100 "AcDbLinetypeTableRecord")
+                    (cons 2 "DASHED") (cons 70 0) (cons 3 "Dashed __ __ __") (cons 72 65) (cons 73 2)
+                    (cons 40 1.5) (cons 49 1.0) (cons 74 0) (cons 49 -0.5) (cons 74 0)))
+     (if (tblsearch "LTYPE" "DASHED") "DASHED"))
+  )
+)
+
+;; Cria a camada que falta (cor ACI, tipo de linha e, com imprime 0, sem plotar: 290 = 0); T se criou. A que já
+;; existe não muda.
+(defun pok-camada-desenho (nome cor tipo imprime / tl)
+  (if (and (pok-camada-desenho-p nome) (not (tblsearch "LAYER" nome)))
+    (progn
+      (setq tl (cond ((pok-tipo-linha tipo)) (t "Continuous")))
+      (entmake (list (cons 0 "LAYER") (cons 100 "AcDbSymbolTableRecord") (cons 100 "AcDbLayerTableRecord")
+                     (cons 2 nome) (cons 70 0)
+                     (cons 62 (if (and (= (type cor) 'INT) (> cor 0) (< cor 256)) cor 7))
+                     (cons 6 tl)
+                     (cons 290 (if (= imprime 0) 0 1))))
+      (if (tblsearch "LAYER" nome) T)
+    )
+  )
+)
+
+;; (x y x y ...) -> ((x y) (x y) ...)
+(defun pok-pares (nums / pts)
+  (while (and nums (cdr nums))
+    (setq pts (cons (list (float (car nums)) (float (cadr nums))) pts) nums (cddr nums)))
+  (reverse pts)
+)
+
+;; a: (camada fechada x y x y ...)
+(defun pok-d-polilinha (a / pts)
+  (if (and (member (nth 1 a) '(0 1))
+           (pok-nums-p (cddr a))
+           (= 0 (rem (length (cddr a)) 2))
+           (>= (length (setq pts (pok-pares (cddr a)))) 2))
+    (entmakex
+      (append
+        (list (cons 0 "LWPOLYLINE") (cons 100 "AcDbEntity") (cons 8 (car a)) (cons 100 "AcDbPolyline")
+              (cons 90 (length pts)) (cons 70 (nth 1 a)))
+        (mapcar '(lambda (p) (cons 10 p)) pts)
+      )
+    )
+  )
+)
+
+;; a: (camada x1 y1 x2 y2 tipo)
+(defun pok-d-linha (a / tl)
+  (if (pok-nums-p (list (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a)))
+    (progn
+      (setq tl (pok-tipo-linha (nth 5 a)))
+      (entmakex
+        (append
+          (list (cons 0 "LINE") (cons 100 "AcDbEntity") (cons 8 (car a)))
+          (if tl (list (cons 6 tl)))
+          (list (cons 100 "AcDbLine") (cons 10 (pok-pt (nth 1 a) (nth 2 a))) (cons 11 (pok-pt (nth 3 a) (nth 4 a))))
+        )
+      )
+    )
+  )
+)
+
+;; a: (camada xc yc raio inicio fim). ARC: 50 e 51 em radianos, o AutoCAD vai de 50 a 51 no sentido anti-horário.
+(defun pok-d-arco (a)
+  (if (and (pok-nums-p (list (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a) (nth 5 a)))
+           (= (length a) 6)
+           (> (nth 3 a) 0))
+    (entmakex
+      (list (cons 0 "ARC") (cons 100 "AcDbEntity") (cons 8 (car a)) (cons 100 "AcDbCircle")
+            (cons 10 (pok-pt (nth 1 a) (nth 2 a))) (cons 40 (float (nth 3 a)))
+            (cons 100 "AcDbArc") (cons 50 (* (nth 4 a) (/ pi 180.0))) (cons 51 (* (nth 5 a) (/ pi 180.0))))
+    )
+  )
+)
+
+;; TEXT de uma linha. "centro": o ponto é o meio do texto (72 = 1 e 73 = 2, com o 11); "esquerda": o canto de baixo.
+(defun pok-texto-desenho (camada p altura txt r alinhamento)
+  (entmakex
+    (append
+      (list (cons 0 "TEXT") (cons 100 "AcDbEntity") (cons 8 camada) (cons 100 "AcDbText")
+            (cons 10 p) (cons 40 (float altura)) (cons 1 txt) (cons 50 r))
+      (if (= alinhamento "centro") (list (cons 72 1) (cons 11 p) (cons 73 2)) (list (cons 72 0) (cons 73 0)))
+    )
+  )
+)
+
+;; a: (camada x y altura giro alinhamento texto...)
+(defun pok-d-texto (a / txt)
+  (setq txt (pok-juntar (cddr (cddddr a))))
+  (if (and (pok-nums-p (list (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a)))
+           (> (nth 3 a) 0)
+           (/= txt "")
+           (member (nth 5 a) '("esquerda" "centro")))
+    (pok-texto-desenho (car a) (pok-pt (nth 1 a) (nth 2 a)) (nth 3 a) txt (* (nth 4 a) (/ pi 180.0)) (nth 5 a))
+  )
+)
+
+;; A cota alinhada como DIMENSION (70 = 1 alinhada + 32 bloco só dela): 13 e 14 as pontas medidas, 10 a ponta da
+;; linha de cota do lado do 14, 11 o meio do texto, 1 a medida escrita. Sem o código 2, o AutoCAD faz o bloco *D.
+;; O estilo vai por cima do estilo atual (xdata DSTYLE), com os números do estilo do DXF do site: o desenho é em
+;; metros, e o estilo do escritório (em mm, ou com DIMSCALE 50) faria o texto sumir ou cobrir o lote.
+(defun pok-dimension (camada p1 p2 pl meio txt)
+  (entmakex
+    (list (cons 0 "DIMENSION") (cons 100 "AcDbEntity") (cons 8 camada) (cons 100 "AcDbDimension")
+          (cons 10 pl) (cons 11 meio) (cons 70 33) (cons 1 txt) (cons 100 "AcDbAlignedDimension")
+          (cons 13 p1) (cons 14 p2)
+          (list -3 (list "ACAD" (cons 1000 "DSTYLE") (cons 1002 "{")
+                         (cons 1070 40) (cons 1040 1.0)     ; DIMSCALE
+                         (cons 1070 41) (cons 1040 0.2)     ; DIMASZ
+                         (cons 1070 42) (cons 1040 0.1)     ; DIMEXO
+                         (cons 1070 44) (cons 1040 0.1)     ; DIMEXE
+                         (cons 1070 140) (cons 1040 0.25)   ; DIMTXT
+                         (cons 1070 142) (cons 1040 0.1)    ; DIMTSZ (traço de arquitetura)
+                         (cons 1070 147) (cons 1040 0.1)    ; DIMGAP
+                         (cons 1070 77) (cons 1070 1)       ; DIMTAD (texto acima da linha)
+                         (cons 1002 "}")))
+    )
+  )
+)
+
+;; A mesma cota em LINE + TEXT, quando o AutoCAD não aceita a DIMENSION: a linha de cota, as chamadas (só quando
+;; a linha sai das pontas), um traço de 45° em cada ponta e a medida, como o bloco *D do DXF do site.
+(defun pok-cota-em-linhas (camada p1 p2 pl meio r txt / q1 desloca d alem ao traco linha)
+  (setq desloca (pok-menos pl p2)
+        q1 (pok-mais p1 desloca)
+        d (distance p2 pl)
+        ao (pok-vezes (pok-menos p2 p1) (/ 1.0 (distance p1 p2)))
+        traco (pok-vezes (list (- (car ao) (cadr ao)) (+ (cadr ao) (car ao)) 0.0) 0.1))
+  (if (> d 1e-9)
+    (progn
+      (setq alem (pok-vezes desloca (/ 0.1 d)))
+      (pok-d-linha (list camada (car p1) (cadr p1) (car (pok-mais q1 alem)) (cadr (pok-mais q1 alem)) ""))
+      (pok-d-linha (list camada (car p2) (cadr p2) (car (pok-mais pl alem)) (cadr (pok-mais pl alem)) ""))
+    )
+  )
+  (foreach q (list q1 pl)
+    (pok-d-linha (list camada (car (pok-menos q traco)) (cadr (pok-menos q traco))
+                       (car (pok-mais q traco)) (cadr (pok-mais q traco)) "")))
+  (setq linha (pok-d-linha (list camada (car q1) (cadr q1) (car pl) (cadr pl) "")))
+  (if linha (pok-texto-desenho camada meio 0.25 txt r "centro"))
+)
+
+;; a: (camada x1 y1 x2 y2 xl yl texto...). O texto fica 0,25 acima do meio da linha de cota, no sentido de leitura.
+(defun pok-d-cota (a / p1 p2 pl txt q1 r acima meio)
+  (setq txt (pok-juntar (cdddr (cddddr a))))
+  (if (and (pok-nums-p (list (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a) (nth 5 a) (nth 6 a))) (/= txt ""))
+    (progn
+      (setq p1 (pok-pt (nth 1 a) (nth 2 a)) p2 (pok-pt (nth 3 a) (nth 4 a)) pl (pok-pt (nth 5 a) (nth 6 a)))
+      (if (> (distance p1 p2) 1e-6)
+        (progn
+          (setq q1 (pok-mais p1 (pok-menos pl p2))
+                r (pok-legivel (atan (- (cadr p2) (cadr p1)) (- (car p2) (car p1))))
+                acima (list (- (sin r)) (cos r) 0.0)
+                meio (pok-mais (pok-vezes (pok-mais q1 pl) 0.5) (pok-vezes acima 0.25)))
+          (cond
+            ((pok-dimension (car a) p1 p2 pl meio txt))
+            ((pok-cota-em-linhas (car a) p1 p2 pl meio r txt) (setq cotas-em-linhas (1+ cotas-em-linhas)))
+          )
+        )
+      )
+    )
+  )
+)
+
+;; Um item já inteiro (com os "+" juntados). Os contadores são os locais do pok-desenhar (escopo dinâmico).
+(defun pok-desenhar-um (item / tipo a feito)
+  (if (= (type item) 'LIST) (setq tipo (car item) a (cdr item)))
+  (cond
+    ((= tipo "camada") (if (pok-camada-desenho (nth 0 a) (nth 1 a) (nth 2 a) (nth 3 a)) (setq camadas (1+ camadas))))
+    ((= tipo "zoom")
+     (if (setq a (pok-caixa-valida a))
+       (command "_.ZOOM" "_W" (list (nth 0 a) (nth 1 a)) (list (nth 2 a) (nth 3 a)))))
+    (t
+     (if (pok-camada-desenho-p (car a))
+       (setq feito
+         (cond
+           ((= tipo "polilinha") (pok-d-polilinha a))
+           ((= tipo "linha") (pok-d-linha a))
+           ((= tipo "arco") (pok-d-arco a))
+           ((= tipo "texto") (pok-d-texto a))
+           ((= tipo "cota") (pok-d-cota a))
+         )
+       )
+     )
+     (if feito (setq criadas (1+ criadas)) (setq ignoradas (1+ ignoradas))))
+  )
+)
+
+;; Junta cada item com os "+" que vêm depois dele e desenha.
+(defun pok-desenhar-itens (itens / pend)
+  (foreach item itens
+    (cond
+      ((and (= (type item) 'LIST) (= (car item) "+"))
+       (if pend (setq pend (append pend (cdr item))) (setq ignoradas (1+ ignoradas))))
+      (t
+       (if pend (pok-desenhar-um pend))
+       (setq pend item))
+    )
+  )
+  (if pend (pok-desenhar-um pend))
+)
+
+(defun pok-json-desenho (extra)
+  (strcat "{\"ok\":true" extra ",\"criadas\":" (itoa criadas) ",\"ignoradas\":" (itoa ignoradas)
+          ",\"camadas\":" (itoa camadas) ",\"cotasEmLinhas\":" (itoa cotas-em-linhas) "}")
+)
+
+;; O desenho no espaço do modelo, num grupo de desfazer só. Nunca apaga nem altera entidade que já existe.
+;; O CTAB muda antes do UNDO _Begin (protegido: se o AutoCAD não deixar, nada é desenhado e nenhum grupo fica aberto).
+;; UNDOCTL: bit 1 = UNDO ligado, bit 2 = só um comando (o UNDO "One", sem Begin/End). Fora do UNDO completo, desenha
+;; sem o grupo (o _Begin ficaria preso no prompt) e avisa com "semDesfazer":true.
+(defun pok-desenhar (saida itens / criadas ignoradas camadas cotas-em-linhas ss r u grupo sem-desfazer)
+  (setq criadas 0 ignoradas 0 camadas 0 cotas-em-linhas 0)
+  (if (and (= (type (car itens)) 'LIST) (= (car (car itens)) "se-vazio"))
+    (setq ss (if (= (type (cadr (car itens))) 'STR) (ssget "_X" (list (cons 8 (cadr (car itens))))))
+          itens (cdr itens))
+  )
+  (cond
+    (ss (write-line (pok-json-desenho (strcat ",\"jaDesenhado\":" (itoa (sslength ss)))) saida))
+    ((and (/= (strcase (getvar "CTAB")) "MODEL")
+          (vl-catch-all-error-p (setq r (vl-catch-all-apply 'setvar (list "CTAB" "Model")))))
+     (write-line (strcat "{\"ok\":false,\"erro\":"
+                         (pok-js (strcat "desenhar: o AutoCAD nao deixou ir ao espaco do modelo (CTAB): "
+                                         (vl-catch-all-error-message r)))
+                         ",\"criadas\":0}")
+                 saida))
+    (t
+      (setq u (getvar "UNDOCTL")
+            grupo (and (= (type u) 'INT) (= (logand u 1) 1) (= (logand u 2) 0))
+            sem-desfazer (if grupo "" ",\"semDesfazer\":true"))
+      (if grupo (command "_.UNDO" "_Begin"))
+      (setq r (vl-catch-all-apply 'pok-desenhar-itens (list itens)))
+      (if grupo (command "_.UNDO" "_End"))
+      (write-line
+        (if (vl-catch-all-error-p r)
+          (strcat "{\"ok\":false,\"erro\":" (pok-js (strcat "desenhar: " (vl-catch-all-error-message r)))
+                  ",\"criadas\":" (itoa criadas) sem-desfazer "}")
+          (pok-json-desenho sem-desfazer)
+        )
+        saida
+      )
+    )
+  )
+)
+
 ;; ---------------------------------------------------------------- info e despacho
 
 (defun pok-info (saida / v)
@@ -790,6 +1088,7 @@
     ((= comando "regioes") (pok-regioes saida args))
     ((= comando "caixas") (pok-caixas saida args))
     ((= comando "chamadas") (pok-chamadas saida args))
+    ((= comando "desenhar") (pok-desenhar saida args))
     ((= comando "limpar") (pok-limpar saida))
     ((= comando "quadro") (pok-quadro saida (pok-juntar args)))
     ((= comando "salvar") (pok-salvar saida))

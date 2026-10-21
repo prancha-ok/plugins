@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from . import __version__, atualizacao, autocad, backend, chamadas, instalacao, marcas, terreno
 from .autocad import AutocadIndisponivel
 from .backend import ErroBackend, NaoConectado
+from .desenho import pedidos as pedidos_do_desenho
 from .locais import api, empacotado, gravar_estado, ler_estado, nome_maquina, pasta, pasta_ipc, pasta_lisp
 
 INSTRUCOES = """\
@@ -35,6 +36,18 @@ parecer: `rever_medidas` (gera o parecer seguinte só com o que mudou). O terren
 a qualquer momento com `conferir_terreno` (sem argumentos, escreve as letras no desenho). Crítica ou
 falso apontamento que a pessoa contar: `enviar_sugestao`. Se algo não funcionar: `diagnosticar`.
 
+Projeto do zero (ainda sem prancha): a pessoa confere o terreno no site (o estudo do lote, desenhado sobre o
+mapa na etapa do lote do guia, ou o terreno conforme o RGI); com o desenho aberto e vinculado ao projeto, e o
+pedido dela, `desenhar_terreno` desenha o ponto de partida (lote, afastamentos, cotas, rua, norte, título da
+planta de situação e quadro com a zona e os índices), em metros, nas camadas PRANCHAOK-*. Diga os avisos que
+vierem e o `desfazer` (um desfazer volta tudo; com `semDesfazer`, não). Depois do terreno, a planta baixa: você
+propõe com a pessoa o programa da casa (cômodos em retângulos, em metros, no plano local do lote; portas e
+janelas) e `gerar_planta` manda ao Prancha Ok, que desenha e confere o que desenhou (dentro do lote e dos
+afastamentos, taxa de ocupação, coeficiente de aproveitamento, as áreas que ele lê). Planeje os cômodos dentro
+da `areaLivre` que o `desenhar_terreno` devolve (no mesmo plano local); sem ela, chame o `desenhar_terreno`
+antes. Programa que não fecha ou conferência com problemas: nada é desenhado; diga as frases, pergunte o que
+mudar e mande de novo. Na legalização, nunca: o desenho é o que já está construído. Depois, o fluxo de sempre.
+
 O parecer traz só o que vale para este projeto (o que não se aplica fica de fora, só contado):
 - em desacordo (erro): a prancha contraria a referência do item;
 - dúvida: falta informação na prancha; pergunte à pessoa;
@@ -46,9 +59,11 @@ O parecer traz só o que vale para este projeto (o que não se aplica fica de fo
   está certo). A pessoa confere; nunca diga que está atendido.
 
 Regras:
-- Nunca altere o desenho. Quem corrige é o arquiteto; você explica o item e mostra onde está
-  (`ir_para_item`). As marcas e o quadro-resumo ficam só na camada PRANCHAOK-PARECER, que não
-  plota e que o Prancha Ok ignora na leitura.
+- Nunca apague nem altere o que a pessoa desenhou; o Prancha Ok só acrescenta, nas camadas
+  PRANCHAOK-*, quando a pessoa pede. Quem corrige é o arquiteto; você explica o item e mostra onde
+  está (`ir_para_item`). As marcas e o quadro-resumo ficam só na camada PRANCHAOK-PARECER, que não
+  plota e que o Prancha Ok ignora na leitura; o terreno do `desenhar_terreno` e a planta do
+  `gerar_planta`, nas outras PRANCHAOK-*, que plotam e que o Prancha Ok lê.
 - O parecer é um apoio: tudo passa por revisão humana. Não diga que algo está "aprovado pela
   prefeitura"; diga o que o Prancha Ok apontou, com a referência do item (a lei, ou "Sugestão
   referenciada" quando o item não vem de uma lei). Não invente outra fonte para o item.
@@ -893,6 +908,330 @@ def rever_medidas(valores: dict[str, float] | None = None, respostas: dict[str, 
         return {"ok": False, "erro": f"{e}" + (f": {explicacao}" if explicacao else "")}
     except Exception as e:
         return _erro(e)
+
+
+# ---------------------------------------------------------------- projeto do zero (0.6.0)
+
+CAMADA_DO_LOTE = "PRANCHAOK-LOTE"
+ORIGEM_DO_TERRENO = {"estudo": "o lote desenhado sobre o mapa no site (estudo do lote)",
+                     "rgi": "o terreno conferido com o RGI no site (as medidas da matrícula)"}
+
+
+def _projeto_do_desenho(projeto_id: str | None, o_que: str) -> tuple[str | None, dict | None]:
+    """O projeto: o escolhido, senão o vinculado ao desenho aberto (ou lembrado para o arquivo). Sem nenhum, a saída
+    da ferramenta com os projetos da empresa, para o chat perguntar de qual projeto é `o_que`."""
+    if projeto_id:
+        return projeto_id, None
+    aberto = autocad.info()
+    vinculo = aberto.get("vinculo") or _vinculo_lembrado(aberto.get("arquivo") or "") or {}
+    if vinculo.get("projetoId"):
+        return vinculo["projetoId"], None
+    projetos = backend.projetos()
+    if not projetos:
+        return None, {"ok": False, "projetos": [], "erro": SEM_PROJETO}
+    return None, {"ok": False, "projetos": projetos,
+                  "erro": f"Este desenho não está ligado a um projeto. Pergunte à pessoa de qual projeto é {o_que} e "
+                          "chame de novo com projeto_id, ou use `vincular_projeto`."}
+
+
+def _total() -> dict:
+    """A soma dos pedidos de um desenho: o que o LISP contou e quantos pedidos (partes) foram, entraram inteiros e
+    pararam no meio (`parcial`: o que falhou já tinha criado algo, ou não respondeu e pode ter criado)."""
+    return {"criadas": 0, "ignoradas": 0, "camadas": 0, "cotasEmLinhas": 0, "enviados": 0, "inteiros": 0,
+            "parcial": False, "semResposta": False, "semDesfazer": False}
+
+
+def _mandar_ao_autocad(plano, total: dict) -> int | None:
+    """Os pedidos do plano ao `desenhar`, um a um, somando em `total`. Devolve quantos objetos a camada do `se-vazio`
+    já tinha, quando o 1º pedido não desenhou nada por isso. Para no primeiro erro (os lotes seguintes não vão): o
+    `criadas` até o erro, que o LISP manda na resposta, entra em `total` antes de a exceção subir."""
+    for itens in plano.pedidos:
+        total["enviados"] += 1
+        try:
+            feito = autocad.desenhar(itens)
+        except autocad.RecusaDoAutocad as e:
+            criadas = int(e.resposta.get("criadas") or 0)
+            total["criadas"] += criadas
+            total["parcial"] = criadas > 0
+            total["semDesfazer"] = total["semDesfazer"] or bool(e.resposta.get("semDesfazer"))
+            raise
+        except Exception:
+            total["parcial"] = total["semResposta"] = True  # pode ter entrado pela metade
+            raise
+        if feito.get("jaDesenhado"):
+            total["enviados"] -= 1  # nada foi desenhado nem agrupado
+            return int(feito["jaDesenhado"])
+        for chave in ("criadas", "ignoradas", "camadas", "cotasEmLinhas"):
+            total[chave] += int(feito.get(chave) or 0)
+        total["inteiros"] += 1
+        total["semDesfazer"] = total["semDesfazer"] or bool(feito.get("semDesfazer"))
+    return None
+
+
+def _sem_desfazer(camadas: str) -> str:
+    return (f"O UNDO do AutoCAD está desligado ou limitado a um comando (UNDOCTL): não dá para desfazer de uma vez. "
+            f"Para tirar, a pessoa apaga o que entrou agora nas camadas {camadas}. Para os próximos, ela liga o UNDO "
+            "inteiro (comando UNDO, opção Control > All).")
+
+
+def _desfazer(grupos: int, o_que: str) -> str:
+    return (f"Um desfazer (Ctrl+Z ou U) volta {o_que}." if grupos == 1 else
+            f"Foi em {grupos} partes: {grupos} desfazer (Ctrl+Z) voltam {o_que}.")
+
+
+def _desfazer_do_total(total: dict, plano, o_que: str, camadas: str) -> dict:
+    if total["semDesfazer"]:
+        return {"semDesfazer": True, "desfazer": _sem_desfazer(camadas)}
+    return {"desfazer": _desfazer(len(plano.pedidos), o_que)}
+
+
+def _interrompido(e: Exception, total: dict, plano, o_que: str, camadas: str) -> dict:
+    """A saída de um desenho que parou no meio: o erro, quanto foi desenhado até ele, quantas partes entraram e como
+    tirar o que ficou. Sem pedido enviado, só o erro."""
+    saida = _erro(e)
+    if not total["enviados"]:
+        return saida
+    partes = len(plano.pedidos)
+    grupos = total["inteiros"] + (1 if total["parcial"] else 0)
+    saida["desenhadasAntesDoErro"] = total["criadas"]
+    saida["partes"] = {"total": partes, "inteiras": total["inteiros"], "naoEnviadas": partes - total["enviados"]}
+    if total["semResposta"]:
+        saida["partes"]["semResposta"] = total["enviados"]
+    if not grupos:
+        saida["mensagem"] = f"Nada foi desenhado ({o_que}): o erro veio antes. Diga o erro à pessoa."
+        return saida
+    texto = (f"{o_que[0].upper()}{o_que[1:]} parou no erro: foram desenhados {total['criadas']} objeto(s)"
+             + (f", {total['inteiros']} de {partes} partes inteiras"
+                + (f"; a parte {total['enviados']} parou no meio" if total["parcial"] else "")
+                + (f"; as {partes - total['enviados']} seguintes não foram" if partes > total["enviados"] else "")
+                if partes > 1 else "")
+             + (" (o AutoCAD não respondeu à última: confira o que entrou)" if total["semResposta"] else "")
+             + ". O desenho ficou pela metade: diga o erro à pessoa. ")
+    if total["semDesfazer"]:
+        saida["semDesfazer"] = True
+        saida["desfazer"] = _sem_desfazer(camadas)
+    else:
+        saida["desfazer"] = (f"{grupos} desfazer (Ctrl+Z ou U), um por parte enviada, tiram o que foi desenhado; "
+                             f"depois, confira no desenho que o que entrou agora saiu (camadas {camadas}).")
+    saida["mensagem"] = texto + saida["desfazer"]
+    return saida
+
+
+def _pontos(valor) -> list[list[float]] | None:
+    """Os pontos [[x, y], ...] de {pontos: [...]}, arredondados a 2 casas (cm); nada se o formato não é esse."""
+    pontos = valor.get("pontos") if isinstance(valor, dict) else None
+    if not isinstance(pontos, list) or not pontos:
+        return None
+    if not all(isinstance(p, list) and len(p) == 2 and all(isinstance(n, (int, float)) and not isinstance(n, bool)
+                                                          for n in p) for p in pontos):
+        return None
+    return [[round(float(x), 2), round(float(y), 2)] for x, y in pontos]
+
+
+def _geometria_do_terreno(resposta: dict) -> dict:
+    """O lote e a área livre dos afastamentos no plano local do lote (o vértice A na origem, em metros: o plano do
+    programa do `gerar_planta`) e `origemDoPlano`, onde esse vértice fica no desenho. Backend antigo: {}."""
+    saida: dict = {}
+    if (lote := _pontos(resposta.get("lote"))) is not None:
+        saida["lote"] = {"pontos": lote}
+    if "areaLivre" in resposta:
+        livre = _pontos(resposta.get("areaLivre"))
+        saida["areaLivre"] = {"pontos": livre} if livre is not None else None
+    origem = resposta.get("origemDoPlano")
+    if (isinstance(origem, list) and len(origem) == 2
+            and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in origem)):
+        saida["origemDoPlano"] = [float(origem[0]), float(origem[1])]
+    if saida:
+        saida["planoLocal"] = ("`lote` e `areaLivre` estão no plano local do lote, em metros, com o vértice A na "
+                               "origem (no desenho, em `origemDoPlano`): o plano do programa do `gerar_planta`. "
+                               "Planeje os cômodos dentro da `areaLivre`"
+                               + ("." if saida.get("areaLivre") else
+                                  "; sem ela, a área livre dos afastamentos não saiu: confira com a pessoa."
+                                  if "areaLivre" in saida else "."))
+    return saida
+
+
+@mcp.tool()
+def desenhar_terreno(projeto_id: str | None = None, de_novo: bool = False) -> dict:
+    """Desenha no desenho aberto o terreno de partida do projeto (0.6.0, projeto do zero): o lote, o limite dos
+    afastamentos, a medida de cada lado, a rua e os vizinhos, o norte, o título da planta de situação e o quadro com a
+    zona e os índices, a partir do terreno conferido no site (o estudo do lote ou o RGI). Em metros (1 unidade = 1 m),
+    no espaço do modelo, só nas camadas PRANCHAOK-*: nunca apaga nem altera o que a pessoa desenhou, e um desfazer
+    (Ctrl+Z) volta tudo. Só quando a pessoa pede. O projeto é o vinculado ao desenho (ou `projeto_id`). Se o desenho já
+    tem o lote (camada PRANCHAOK-LOTE), não desenha de novo, salvo `de_novo=true` com o sim da pessoa (fica por cima).
+    Deixa o desenho com alteração não salva. Devolve também o lote e a área livre dos afastamentos no plano local
+    (`lote`, `areaLivre`), para planejar os cômodos do `gerar_planta` dentro dela.
+    Se o AutoCAD recusa no meio, para ali e diz quanto foi desenhado e como tirar."""
+    total = _total()
+    plano = None
+    try:
+        projeto, sem_projeto = _projeto_do_desenho(projeto_id, "o terreno")
+        if sem_projeto:
+            return sem_projeto
+        resposta = backend.terreno_do_zero(projeto)
+        geometria = _geometria_do_terreno(resposta)
+        avisos = [a for a in resposta.get("avisos") or [] if isinstance(a, str)]
+        recebido = resposta.get("desenho") or {}
+        if recebido.get("unidade") != "m":
+            return {"ok": False, "erro": f"O desenho veio numa unidade que o conector não conhece "
+                                         f"({recebido.get('unidade')!r}); atualize o conector."}
+        plano = pedidos_do_desenho(recebido, so_se_vazio=None if de_novo else CAMADA_DO_LOTE)
+        if not plano.enviadas:
+            return {"ok": False, "avisos": avisos, "erro": "O Prancha Ok não mandou nada que dê para desenhar."}
+        total["ignoradas"] = plano.ignoradas
+        if ja := _mandar_ao_autocad(plano, total):
+            return {"ok": False, "jaDesenhado": True, **geometria,
+                    "erro": f"O desenho já tem o lote (camada {CAMADA_DO_LOTE}, {ja} objeto(s)): "
+                            "nada foi desenhado. Para desenhar de novo, por cima do que está lá, pergunte à pessoa e "
+                            "chame com de_novo=true; para trocar, ela apaga as camadas PRANCHAOK-* antes."}
+        return {
+            "ok": True,
+            "origem": ORIGEM_DO_TERRENO.get(resposta.get("origem"), resposta.get("origem")),
+            "desenhadas": total["criadas"],
+            "ignoradas": total["ignoradas"],
+            "camadasCriadas": total["camadas"],
+            **({"cotasComoLinhas": total["cotasEmLinhas"]} if total["cotasEmLinhas"] else {}),
+            "avisos": avisos,
+            **geometria,
+            **_desfazer_do_total(total, plano, "todo o terreno", "PRANCHAOK-* do terreno (lote, afastamentos, cotas, rua, quadro)"),
+            "mensagem": "Terreno desenhado no espaço do modelo, em metros (1 unidade = 1 m), com as coordenadas do mapa "
+                        "quando o lote foi desenhado sobre ele, nas camadas PRANCHAOK-* (lote, afastamentos, cotas, rua, "
+                        "título, quadro). Diga de onde veio, os avisos e que é um ponto de partida, não uma medição. Se o "
+                        "desenho do escritório é em centímetros ou milímetros, as medidas não batem com o resto: avise. "
+                        "O desenho fica com alteração não salva. Com o terreno no desenho, a planta baixa sai do "
+                        "programa da casa: `gerar_planta`.",
+        }
+    except ErroBackend as e:
+        if e.codigo == "TERRENO_DO_ZERO_INDISPONIVEL":
+            return {"ok": False, "erro": e.motivo or "O terreno deste projeto ainda não dá para desenhar.",
+                    "comoSeguir": "Confira o terreno no site (o estudo do lote na etapa do lote do guia, ou o terreno "
+                                  "conforme o RGI) e chame desenhar_terreno de novo."}
+        if e.codigo == "NAO_ENCONTRADO":
+            return {"ok": False, "erro": "Projeto não encontrado nesta empresa: use `listar_projetos`."}
+        return {"ok": False, "erro": f"{e}"}
+    except Exception as e:
+        return _interrompido(e, total, plano, "o terreno", "PRANCHAOK-* do terreno (lote, afastamentos, cotas, rua, quadro)")
+
+
+PREFIXO_DA_PLANTA = "PRANCHAOK-PLANTA-"
+CAMADA_DAS_PAREDES = "PRANCHAOK-PLANTA-PAREDES"
+
+
+def _lido_pelo_motor(conferencia: dict) -> dict:
+    """O que o Prancha Ok leu da planta que ele mesmo desenhou (planta/conferir.py do motor), para o chat."""
+    return {
+        "comodos": [{"nome": c.get("nome"), "areaM2": c.get("areaM2")} for c in conferencia.get("comodosLidos") or []
+                    if isinstance(c, dict)],
+        "areaConstruidaM2": conferencia.get("areaConstruidaM2"),
+        "taxaDeOcupacaoPct": conferencia.get("toPct"),
+        "coeficienteDeAproveitamento": conferencia.get("ca"),
+    }
+
+
+@mcp.tool()
+def gerar_planta(programa: dict, projeto_id: str | None = None, desenhar: bool = True,
+                 mesmo_com_problemas: bool = False, de_novo: bool = False) -> dict:
+    """Gera a planta baixa (térrea) do projeto do zero pelo programa da casa e a desenha no desenho aberto (0.6.0),
+    em cima do terreno do `desenhar_terreno`. Nunca na legalização (lá o desenho é o que já está construído).
+
+    O ciclo: você (o Claude) PROPÕE o programa com a pessoa (cômodos, medidas, portas e janelas); o Prancha Ok desenha
+    e CONFERE o que desenhou (lê a planta como lê uma prancha: as áreas dos cômodos, a projeção dentro do lote e dos
+    afastamentos, a taxa de ocupação e o coeficiente de aproveitamento da zona); o que não fecha volta em frases para
+    você perguntar à pessoa e mandar o programa ajustado. Só desenha quando a conferência não aponta problema (ou com
+    `mesmo_com_problemas=true`, se a pessoa pedir para desenhar assim mesmo). `desenhar=false`: só confere.
+
+    O programa, em metros, no plano local do lote (o vértice A do lote na origem, x e y como no terreno desenhado):
+      {"comodos": [{"nome": "SALA", "tipo": "permanencia_prolongada",
+                    "retangulo": {"x": 3, "y": 5, "largura": 4.0, "profundidade": 4.5}},
+                   {"nome": "QUARTO 1", "retangulo": {"x": 7, "y": 5, "largura": 3.7, "profundidade": 4.5}},
+                   {"nome": "BANHEIRO", "retangulo": {"x": 7, "y": 9.5, "largura": 1.5, "profundidade": 2.4}}, ...],
+       "paredes": {"externaM": 0.15, "internaM": 0.10},
+       "aberturas": [{"tipo": "porta", "entre": ["QUARTO 1", "SALA"], "larguraM": 0.8},
+                     {"tipo": "janela", "entre": ["QUARTO 1", "exterior"], "larguraM": 1.5, "lado": "direito"},
+                     {"tipo": "porta", "entre": ["SALA", "exterior"], "larguraM": 0.9, "posicaoM": 0.5}],
+       "peDireitoM": 2.8}
+    - Cada cômodo é um retângulo (x, y: o canto de menor x e menor y; largura em x, profundidade em y), de eixo a eixo
+      das paredes de dentro e, nos lados de fora, até a face de fora da casa. Os cômodos se encostam: a divisa de dois
+      é a parede entre eles. Nomes diferentes (QUARTO 1, QUARTO 2); "exterior" é o lado de fora. `tipo` é opcional.
+    - Abertura `entre` dois cômodos ou um cômodo e "exterior"; a porta abre para dentro do primeiro. `posicaoM`: do
+      canto de menor x (parede horizontal) ou de menor y (parede vertical) do trecho até o 1º batente; sem ela, no
+      meio. `lado` (inferior, superior, esquerdo, direito) escolhe a fachada da abertura para fora.
+    - Planeje os cômodos DENTRO da `areaLivre` que o `desenhar_terreno` devolveu (pontos no mesmo plano local; o
+      `lote` também): é o lote menos os afastamentos. Se ainda não chamou o `desenhar_terreno` nesta conversa, chame-o
+      antes (com o terreno já no desenho, ele não desenha de novo e devolve a área livre do mesmo jeito).
+
+    Respostas: `programaImpossivel` com as frases do que não fecha (pergunte e refaça); `problemas` com o que o Prancha
+    Ok leu (não desenhou: ajuste com a pessoa); `desenhadas` quando desenhou. Em metros, no espaço do modelo, só nas
+    camadas PRANCHAOK-PLANTA-*; um desfazer volta tudo. Se o desenho já tem a planta (camada PRANCHAOK-PLANTA-PAREDES),
+    não desenha de novo, salvo `de_novo=true` com o sim da pessoa (fica por cima). O projeto é o vinculado ao desenho
+    (ou `projeto_id`). Se o AutoCAD recusa no meio, para ali e diz quanto foi desenhado e como tirar."""
+    total = _total()
+    plano = None
+    try:
+        if not isinstance(programa, dict) or not programa.get("comodos"):
+            return {"ok": False, "erro": "O programa precisa dos cômodos (`comodos`), cada um com o nome e o retângulo "
+                                         "em metros: veja o formato na descrição da ferramenta."}
+        projeto, sem_projeto = _projeto_do_desenho(projeto_id, "a planta")
+        if sem_projeto:
+            return sem_projeto
+        resposta = backend.planta(projeto, programa)
+        conferencia = resposta.get("conferencia") or {}
+        recebido = resposta.get("desenho") or {}
+        problemas = [p["texto"] for p in conferencia.get("problemas") or []
+                     if isinstance(p, dict) and isinstance(p.get("texto"), str)]
+        avisos = [a for a in recebido.get("avisos") or [] if isinstance(a, str)]
+        base = {"problemas": problemas, "lido": _lido_pelo_motor(conferencia), "avisos": avisos}
+        if problemas and not mesmo_com_problemas:
+            return {"ok": False, "desenhada": False, **base,
+                    "comoSeguir": "Nada foi desenhado. Diga à pessoa cada problema e o que o Prancha Ok leu, proponha o "
+                                  "ajuste do programa (mover, encolher ou tirar um cômodo) e chame gerar_planta de novo "
+                                  "com o programa ajustado. Se ela quiser a planta assim mesmo, mesmo_com_problemas=true."}
+        if not desenhar:
+            return {"ok": True, "desenhada": False, **base,
+                    "mensagem": "Conferida, sem desenhar. Para desenhar, chame com desenhar=true."}
+        if recebido.get("unidade") != "m":
+            return {"ok": False, **base, "erro": f"A planta veio numa unidade que o conector não conhece "
+                                                 f"({recebido.get('unidade')!r}); atualize o conector."}
+        plano = pedidos_do_desenho(recebido, so_se_vazio=None if de_novo else CAMADA_DAS_PAREDES,
+                                   prefixo=PREFIXO_DA_PLANTA)
+        if not plano.enviadas:
+            return {"ok": False, **base, "erro": "O Prancha Ok não mandou nada que dê para desenhar."}
+        total["ignoradas"] = plano.ignoradas
+        if ja := _mandar_ao_autocad(plano, total):
+            return {"ok": False, "jaDesenhado": True, **base,
+                    "erro": f"O desenho já tem a planta (camada {CAMADA_DAS_PAREDES}, {ja} objeto(s)): nada foi "
+                            "desenhado. Para desenhar de novo, por cima, pergunte à pessoa e chame com de_novo=true; "
+                            "para trocar, ela apaga as camadas PRANCHAOK-PLANTA-* antes."}
+        return {
+            "ok": True,
+            "desenhada": True,
+            **base,
+            "comodos": [{"nome": c.get("nome"), "areaM2": c.get("areaM2")} for c in recebido.get("comodos") or []
+                        if isinstance(c, dict)],
+            "desenhadas": total["criadas"],
+            "ignoradas": total["ignoradas"],
+            "camadasCriadas": total["camadas"],
+            **({"cotasComoLinhas": total["cotasEmLinhas"]} if total["cotasEmLinhas"] else {}),
+            **_desfazer_do_total(total, plano, "toda a planta", "PRANCHAOK-PLANTA-*"),
+            "mensagem": "Planta baixa desenhada no espaço do modelo, em metros, em cima do terreno, nas camadas "
+                        "PRANCHAOK-PLANTA-* (paredes, portas, janelas, textos, cotas, título; o contorno livre dos "
+                        "cômodos não plota). É um ponto de partida para a pessoa desenvolver, não um projeto pronto: "
+                        "diga as áreas, os avisos e, se desenhou com problemas, quais ficaram. O desenho fica com "
+                        "alteração não salva.",
+        }
+    except ErroBackend as e:
+        if e.codigo == "PROGRAMA_IMPOSSIVEL":
+            return {"ok": False, "programaImpossivel": e.erros or ["O Prancha Ok não conseguiu montar a planta com esse "
+                                                                  "programa."],
+                    "comoSeguir": "Nada foi desenhado. Diga à pessoa o que não fecha, pergunte o que mudar e chame "
+                                  "gerar_planta de novo com o programa ajustado."}
+        if e.codigo in ("TERRENO_DO_ZERO_INDISPONIVEL", "PLANTA_NA_LEGALIZACAO"):
+            return {"ok": False, "erro": e.motivo or "A planta deste projeto ainda não dá para gerar."}
+        if e.codigo == "NAO_ENCONTRADO":
+            return {"ok": False, "erro": "Projeto não encontrado nesta empresa: use `listar_projetos`."}
+        return {"ok": False, "erro": f"{e}"}
+    except Exception as e:
+        return _interrompido(e, total, plano, "a planta", "PRANCHAOK-PLANTA-*")
 
 
 @mcp.tool()

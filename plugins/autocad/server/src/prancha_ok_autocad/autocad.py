@@ -32,6 +32,21 @@ class AutocadIndisponivel(RuntimeError):
     """AutoCAD fechado, sem desenho aberto, ou o comando não voltou no prazo."""
 
 
+class RecusaDoAutocad(AutocadIndisponivel):
+    """O LISP respondeu ok:false. `resposta` é a 1ª linha dele (no `desenhar`, com o `criadas` até o erro)."""
+
+    def __init__(self, mensagem: str, resposta: dict):
+        super().__init__(mensagem)
+        self.resposta = resposta
+
+
+def conferir_resposta(comando: str, linhas: list[dict]) -> list[dict]:
+    """As linhas da resposta, ou RecusaDoAutocad quando a 1ª diz ok:false."""
+    if linhas and not linhas[0].get("ok"):
+        raise RecusaDoAutocad(f"O AutoCAD recusou '{comando}': {linhas[0].get('erro')}", linhas[0])
+    return linhas
+
+
 def _executavel(hwnd: int) -> str:
     """Nome do executável dono da janela (ex.: acad.exe), ou "" se não der para saber."""
     import win32api
@@ -268,9 +283,7 @@ def pedir(comando: str, *argumentos, prazo_s: float = PRAZO_PADRAO_S) -> list[di
                 except (OSError, ValueError):
                     time.sleep(INTERVALO_S)  # ainda sendo renomeado
                     continue
-                if linhas and not linhas[0].get("ok"):
-                    raise AutocadIndisponivel(f"O AutoCAD recusou '{comando}': {linhas[0].get('erro')}")
-                return linhas
+                return conferir_resposta(comando, linhas)
             time.sleep(INTERVALO_S)
         if pedido.exists():
             ultimo = _ultimo_prompt()
@@ -332,6 +345,14 @@ def marcar_chamadas(lista) -> dict:
     Devolve {marcadas: [índices], semLugar: [índices]} (índice na lista pedida)."""
     return pedir("chamadas", *(chamada(c.referencia, c.espaco, c.cor, c.altura, c.seta, c.largura_ponta,
                                        c.rotulo, c.texto) for c in lista), prazo_s=60.0)[0]
+
+
+def desenhar(itens: list[list]) -> dict:
+    """Acrescenta ao desenho, no espaço do modelo, as entidades de um pedido de desenho.py (0.6.0), num grupo de
+    desfazer só. Devolve {criadas, ignoradas, camadas, cotasEmLinhas} (e semDesfazer: true quando o UNDO do AutoCAD
+    está desligado, sem o grupo) e, se a camada do `se-vazio` já tem algo, {jaDesenhado: n} sem desenhar nada. Erro no
+    meio: RecusaDoAutocad, com o `criadas` até o erro na `resposta`."""
+    return pedir("desenhar", *itens, prazo_s=60.0)[0]
 
 
 def limpar() -> dict:

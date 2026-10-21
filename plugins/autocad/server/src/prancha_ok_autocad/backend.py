@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import keyring
@@ -13,9 +14,13 @@ _COFRE = "prancha-ok-autocad"
 
 
 class ErroBackend(RuntimeError):
-    def __init__(self, status: int, codigo: str):
+    def __init__(self, status: int, codigo: str, motivo: str | None = None, erros: list[str] | None = None):
         super().__init__(f"{codigo} (HTTP {status})")
         self.status, self.codigo = status, codigo
+        # A frase pronta que algumas recusas trazem (ex.: TERRENO_DO_ZERO_INDISPONIVEL).
+        self.motivo = motivo
+        # As frases de uma recusa com várias (PROGRAMA_IMPOSSIVEL da planta: o que mudar no programa).
+        self.erros = erros or []
 
 
 class NaoConectado(RuntimeError):
@@ -45,9 +50,11 @@ def _resposta(r: httpx.Response) -> dict | list:
         corpo = {}
     if r.status_code >= 400:
         codigo = corpo.get("codigo", "ERRO") if isinstance(corpo, dict) else "ERRO"
+        motivo = corpo.get("motivo") if isinstance(corpo, dict) and isinstance(corpo.get("motivo"), str) else None
+        erros = corpo.get("erros") if isinstance(corpo, dict) and isinstance(corpo.get("erros"), list) else []
         if r.status_code == 401:
             raise NaoConectado("A conexão com o Prancha Ok não vale mais: use a ferramenta `conectar`.")
-        raise ErroBackend(r.status_code, codigo)
+        raise ErroBackend(r.status_code, codigo, motivo, [e for e in erros if isinstance(e, str)])
     return corpo
 
 
@@ -85,6 +92,22 @@ def eu() -> dict:
 
 def projetos() -> list:
     return _autenticado("GET", "/cliente/v1/projetos")
+
+
+def terreno_do_zero(projeto_id: str) -> dict:
+    """O desenho de partida do projeto do zero (0.6.0), do estudo do lote ou do terreno do RGI conferido:
+    {avisos, origem: "estudo" | "rgi", desenho: {unidade: "m", camadas, entidades, extensao}}. Sem como montar:
+    409 TERRENO_DO_ZERO_INDISPONIVEL, com o `motivo`."""
+    return _autenticado("GET", f"/cliente/v1/projetos/{quote(projeto_id, safe='')}/terreno-do-zero")
+
+
+def planta(projeto_id: str, programa: dict) -> dict:
+    """A planta baixa gerada pelo programa da casa (0.6.0, projeto do zero): o Prancha Ok desenha e confere o que
+    desenhou. {desenho: {unidade: "m", camadas, entidades, extensao, escala, comodos, avisos} (no sistema do terreno
+    desenhado), conferencia: {problemas: [{tipo, texto}], comodosLidos: [{nome, areaM2}], areaConstruidaM2, toPct, ca}}.
+    422 PROGRAMA_IMPOSSIVEL com os `erros`; 409 TERRENO_DO_ZERO_INDISPONIVEL ou PLANTA_NA_LEGALIZACAO com o `motivo`."""
+    return _autenticado("POST", f"/cliente/v1/projetos/{quote(projeto_id, safe='')}/planta",
+                        json={"programa": programa})
 
 
 def _armazenar(projeto_id: str, conteudo: bytes, tipo: str) -> str:

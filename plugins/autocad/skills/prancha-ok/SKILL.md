@@ -1,6 +1,6 @@
 ---
 name: prancha-ok
-description: Confere a prancha aberta no AutoCAD com o Prancha Ok e marca no desenho o que o parecer apontou. Use quando a pessoa pedir para conectar ao Prancha Ok, enviar ou conferir a prancha, conferir a prévia (medidas lidas e perguntas antes do parecer), ver ou marcar o parecer, ir até um item, responder as dúvidas e perguntas do parecer, mandar uma crítica ao Prancha Ok ou limpar as marcas.
+description: Confere a prancha aberta no AutoCAD com o Prancha Ok e marca no desenho o que o parecer apontou. Use quando a pessoa pedir para conectar ao Prancha Ok, enviar ou conferir a prancha, conferir a prévia (medidas lidas e perguntas antes do parecer), ver ou marcar o parecer, ir até um item, responder as dúvidas e perguntas do parecer, mandar uma crítica ao Prancha Ok, limpar as marcas ou desenhar o terreno de partida de um projeto do zero.
 ---
 
 # Prancha Ok no AutoCAD
@@ -12,8 +12,10 @@ simples, sem termos de programação.
 
 ## Regras que valem sempre
 
-- **Nunca altere o desenho.** Quem corrige é o arquiteto. Você explica o item e mostra onde
-  ele está. As marcas e o quadro-resumo ficam só na camada PRANCHAOK-PARECER, que não plota.
+- **Nunca apague nem altere o que a pessoa desenhou; o Prancha Ok só acrescenta, nas camadas
+  PRANCHAOK-\*, quando a pessoa pede.** Quem corrige é o arquiteto. Você explica o item e mostra
+  onde ele está. As marcas e o quadro-resumo ficam só na camada PRANCHAOK-PARECER, que não plota;
+  o terreno do projeto do zero, nas outras PRANCHAOK-\*.
 - **O parecer é um apoio.** Tudo passa por revisão humana. Nunca diga "aprovado pela
   prefeitura" nem que algo "está atendido" quando o parecer manda conferir à mão. Cite a
   referência que o item traz (a lei, ou "Sugestão referenciada"); não invente outra fonte.
@@ -83,6 +85,39 @@ simples, sem termos de programação.
    `valores` e `respostas` só do que mudou, gera o parecer seguinte da mesma prancha, já marcado.
    O terreno se revê com `conferir_terreno` (sem argumentos, as letras voltam ao desenho).
 10. **Depois que o arquiteto corrigir**, volte ao passo 3 (envie de novo: o desenho mudou).
+
+## Projeto do zero: o terreno de partida
+
+Quando a pessoa começa o projeto do zero (ainda sem prancha) e pede o terreno no desenho:
+
+1. **O terreno se confere no site.** Ela desenha o lote sobre o mapa na etapa do lote do guia
+   (o estudo do lote) ou confere o terreno conforme o RGI. Sem isso, `desenhar_terreno` diz o
+   que falta (`erro`): repasse e espere ela conferir.
+2. **Desenhar.** Com o desenho aberto e vinculado ao projeto (passo 2 do fluxo), e o pedido
+   dela, chame `desenhar_terreno`. Ele acrescenta, no espaço do modelo e em metros, o lote, o
+   limite dos afastamentos, a medida de cada lado, a rua e os vizinhos, o norte, o título da
+   planta de situação e o quadro com a zona e os índices, nas camadas PRANCHAOK-\*. Diga de onde
+   veio (`origem`), os `avisos` e que um desfazer (Ctrl+Z) volta tudo. É um ponto de partida,
+   não uma medição: quem confere é ela. Se o desenho do escritório não é em metros, avise.
+3. **Já desenhado.** Se voltar `jaDesenhado`, o lote já está no desenho: não desenhe de novo sem
+   perguntar; com o sim dela, `de_novo=true` desenha por cima.
+4. **A planta baixa.** Com o terreno no desenho, monte com a pessoa o programa da casa: os
+   cômodos (nome, retângulo em metros no plano local do lote, com o vértice A na origem, como o
+   terreno desenhado), as paredes, as portas e as janelas (o formato está na descrição de
+   `gerar_planta`). Use os afastamentos e a área livre do quadro do terreno para pôr a casa
+   dentro do lote. Você propõe; o Prancha Ok desenha e confere o que desenhou:
+   - `programaImpossivel`: o programa não fecha (cômodo sem parede, porta no encontro de duas
+     paredes, nome repetido...). Nada foi desenhado: diga as frases, pergunte o que mudar e
+     chame `gerar_planta` de novo com o programa ajustado.
+   - `problemas`: a planta sai do lote ou dos afastamentos, passa da taxa de ocupação ou do
+     coeficiente de aproveitamento da zona, ou o Prancha Ok leu algo diferente do pedido (veja
+     `lido`). Nada foi desenhado: mostre os problemas e o que ele leu e ajuste com a pessoa. Só
+     se ela pedir para desenhar assim mesmo, `mesmo_com_problemas=true`.
+   - `desenhada`: diga as áreas dos cômodos, os `avisos` e que um desfazer (Ctrl+Z) volta tudo.
+     É um ponto de partida para ela desenvolver, não um projeto pronto.
+   - `jaDesenhado`: a planta já está no desenho; `de_novo=true` só com o sim dela.
+   Na legalização, nunca: lá o desenho é o que já está construído.
+5. **Depois**, com a prancha pronta, o fluxo de sempre (salvar, `enviar_prancha`...).
 
 ## Críticas e falsos apontamentos
 
