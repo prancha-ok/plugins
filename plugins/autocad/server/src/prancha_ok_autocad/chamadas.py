@@ -1,44 +1,57 @@
-"""Chamadas com seta no carimbo e no quadro de áreas (0.3.4; observações de 02/10/2026, item 2).
+"""Rótulos das marcas numa coluna fora do desenho, com uma seta até cada marca (0.3.4; DAV-18).
 
-O especialista marcou o parecer #2 da prancha real 02 pelo MCP: 77 nuvens, e "foram tantas nuvens
-sobre o carimbo que ali ficou extremamente confuso, muito sobreposto". A sugestão dele: no lugar da
-nuvem, uma seta do erro (texto, número ou desenho) até uma chamada "[nº] DÚVIDA/CONFERIR/PERGUNTA";
-ao menos no carimbo, e nos desenhos continuam as nuvens.
+0.3.4 (observações de 02/10/2026, item 2): o especialista marcou o parecer #2 da prancha real 02
+pelo MCP: 77 nuvens, e "foram tantas nuvens sobre o carimbo que ali ficou extremamente confuso,
+muito sobreposto". No carimbo, no quadro de áreas e onde as nuvens se amontoariam, uma seta do item
+até uma chamada "[nº] SITUAÇÃO" no lugar da nuvem.
 
-Vira chamada (o resto continua nuvem, como antes):
+DAV-18 (call de 26/10/2026): "na marcação do desenho, o texto ficou GIGANTE; tem que estar na mesma
+escala do desenho. A legenda é boa, mas também ficou grande. Ficou muito sobreposto: melhor os
+rótulos ficarem do lado de fora do desenho." O rótulo da nuvem era um MTEXT do LISP ao lado dela,
+com 0,15 do lado da caixa quando o marcado não é texto (a polilinha do lote de 30 m: 6,75 m de
+letra), a altura do título na nuvem da região e, no quadro-resumo, 1/90 da altura do EXTMIN/EXTMAX
+(a do espaço aberto: com um layout aberto, o papel em mm virava metros no modelo). Agora:
+  - a altura `a` de toda marca é a do texto comum da folha (espaço e layout) onde ela vai: a mediana
+    das alturas dos TEXT e MTEXT da folha que o LISP manda no `caixas` (sem a camada das marcas),
+    entre 1/PISO_TEXTO e 1/TETO_TEXTO do lado maior do desenho da folha; sem texto, 1/SEM_TEXTO dele.
+    Os títulos grandes não puxam a mediana (são poucos), e o papel e o modelo têm cada um a sua;
+  - o LISP desenha só a nuvem (`marcar`, `regioes`); o rótulo "[nº] SITUAÇÃO: título" de cada item
+    vai numa coluna FORA da extensão do desenho da folha, à direita ou à esquerda (o lado mais perto
+    das marcas do item), um embaixo do outro na ordem dos números, com uma seta até cada marca dele:
+    até a nuvem do handle, até a nuvem da região ou, no carimbo e no amontoado (sem nuvem), até o
+    próprio item.
+Por que uma coluna da folha e não uma por vista: as vistas de uma prancha ficam lado a lado e o MCP
+só conhece as caixas que o motor mandou; o espaço entre elas, com notas, cotas e outras vistas, é
+desconhecido, e a coluna de uma vista cairia em cima da vizinha (o "muito sobreposto" da call). Fora
+da extensão de tudo, nenhum rótulo cobre o desenho; as setas cruzam o desenho (linhas finas na
+camada que não plota), e as duas colunas, uma de cada lado, encurtam as setas pela metade.
+
+Sem nuvem, só a seta (as marcas que viram chamada direta):
   1. o handle cuja caixa tem o centro dentro de uma tabela (carimbo ou quadro de áreas com caixa:
      `regiao.caixa` de qualquer item do parecer), no mesmo layout;
   2. o handle cuja nuvem se sobrepõe à de outros, num amontoado de MINIMO_AMONTOADO ou mais (a nuvem
-     com a folga do LISP, pok-caixa-folgada): "onde várias marcas cairiam na mesma caixa". Só
-     amontoam marcas de tamanho parecido (lado maior até RAZAO_TAMANHO vezes o da outra) em que
-     nenhum desenho envolve a outra marca: a nuvem do lote (folga de 1/4 do lado maior) cobre as
-     cotas de dentro e as de fora, junto da divisa, e a edificação, e juntaria a planta de situação
-     inteira num grupo só;
+     com a folga do LISP, pok-caixa-folgada). Só amontoam marcas de tamanho parecido (lado maior até
+     RAZAO_TAMANHO vezes o da outra) em que nenhum desenho envolve a outra marca: a nuvem do lote
+     (folga de 1/4 do lado maior) cobre as cotas de dentro e as de fora, e juntaria a planta de
+     situação inteira num grupo só;
   3. a linha sem handle achado cuja região é uma tabela achada: a seta aponta a borda da tabela.
+Os outros handles ganham nuvem; a linha sem handle achado, a nuvem de cada região achada
+(servidor._marcar_no_desenho, com as regiões que nenhuma nuvem nem chamada marcou). Essas setas só
+rotulam a nuvem: `itens` vazio, e o item conta como marcado pela nuvem.
 
-Geometria (toda aqui; o LISP só desenha o que vem no pedido): por grupo (uma tabela ou um
-amontoado), uma coluna de rótulos à direita do grupo, um embaixo do outro na ordem dos números, a
-FOLGA_COLUNA alturas da borda; a coluna que bateria numa tabela ou noutra coluna do mesmo layout
-anda para a direita até ficar livre (as nuvens não contam: a de uma polilinha comprida cobre meia
-folha). Um rótulo "[nº] SITUAÇÃO"
-por item, na cor da situação, e uma seta (polilinha com a ponta cheia, sem depender do estilo de
-cota do desenho) do começo do rótulo até o ponto mais perto de cada lugar do item no grupo; o
-handle de vários itens recebe uma seta de cada rótulo.
-Medidas em alturas `a` do texto: a mediana das alturas dos textos marcados no grupo ou, sem texto,
-o lado maior do grupo / ALTURA_SEM_TEXTO.
-
-As posições do desenho vêm do LISP (comando `caixas`: espaço, layout e caixa de cada handle);
-nada aqui fala com o AutoCAD.
+As posições do desenho vêm do LISP (comando `caixas`: espaço, layout e caixa de cada handle e, por
+folha, o texto comum e a extensão); nada aqui fala com o AutoCAD.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .marcas import COR, ROTULO, Linha, chave_regiao, marca_do_handle, regiao_achada
 
 # Os tipos de região que são tabela (services/engine/.../extracao/regioes.py, TIPOS_TABELA).
 TIPOS_TABELA = ("carimbo", "quadro_areas")
+MODELO = ("modelo", "Model")
 MINIMO_AMONTOADO = 3
 # Lado maior de uma marca sobre o da outra, no máximo, para as duas amontoarem: um texto comprido e
 # um número curto da mesma altura ("DORMITÓRIO 01" e "12,5", 13 e 4 caracteres: 3,25) amontoam; o
@@ -47,31 +60,58 @@ RAZAO_TAMANHO = 4.0
 # Em alturas do texto da chamada.
 PASSO = 2.0  # de um rótulo ao seguinte na coluna
 MEIA_FAIXA = 0.8  # o rótulo reserva 0,8a acima e abaixo do meio (a letra ocupa 0,5a): 0,4a entre dois
-FOLGA_COLUNA = 4.0  # da borda do grupo (ou do obstáculo) ao começo dos rótulos
-RECUO_SETA = 0.5  # a seta começa meia altura antes do rótulo
+FOLGA_COLUNA = 4.0  # da borda do desenho ao começo dos rótulos (ou ao fim, na coluna da esquerda)
+RECUO_SETA = 0.5  # a seta começa meia altura antes do rótulo (ou depois da coluna, na da esquerda)
 PONTA = 1.0  # comprimento da ponta da seta (no máximo metade da seta)
 LARGURA_PONTA = 0.4
 LARGURA_LETRA = 0.8  # largura estimada de um caractere (as fontes do AutoCAD ficam abaixo disso)
-ALTURA_SEM_TEXTO = 40.0
+# A altura das marcas, em frações do lado maior do desenho da folha (os mesmos números de
+# pok-altura-das-marcas, no prancha_ok.lsp, para o quadro-resumo): o texto comum fica entre
+# 1/PISO_TEXTO e 1/TETO_TEXTO dele; sem texto nenhum, 1/SEM_TEXTO. A1 (841 mm) com letra de 2,5 mm:
+# 841/336; planta de 60 m com letra de 0,15 m: 60/400.
+TETO_TEXTO = 60.0
+PISO_TEXTO = 2000.0
+SEM_TEXTO = 300.0
+MAXIMO_ROTULO = 60  # caracteres do rótulo "[nº] SITUAÇÃO: título"
+FOLGA_REGIAO = 0.02  # a folga da nuvem da região com caixa (pok-lugar-regiao: pok-folga 0.02)
 
 Caixa = tuple[float, float, float, float]
 Ponto = tuple[float, float]
+Folha = tuple[str, str]  # (espaço "modelo"|"papel", layout)
 
 
 @dataclass(frozen=True)
 class Lugar:
     """Onde um handle está no desenho, como o LISP responde (`caixas`)."""
     handle: str
-    folha: tuple[str, str]  # (espaço "modelo"|"papel", layout)
+    folha: Folha
     caixa: Caixa
     altura: float | None  # altura do texto (TEXT, MTEXT, ATTRIB); None nos outros
+
+
+@dataclass(frozen=True)
+class InfoFolha:
+    """O que o LISP diz de uma folha (`caixas`, DAV-18): o texto comum (mediana das alturas dos TEXT
+    e MTEXT fora da camada das marcas, None sem texto), quantos textos entraram na conta e a
+    extensão do desenho (sem a camada das marcas e sem o que está longe de tudo; None se vazia)."""
+    texto: float | None
+    textos: int
+    extensao: Caixa | None
+
+
+class Achados(dict):
+    """{handle: Lugar}, e em `folhas` o InfoFolha de cada folha dos handles achados."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.folhas: dict[Folha, InfoFolha] = {}
 
 
 @dataclass(frozen=True)
 class Tabela:
     """Carimbo ou quadro de áreas achado no desenho."""
     chave: tuple  # marcas.chave_regiao
-    folha: tuple[str, str]
+    folha: Folha
     caixa: Caixa
     referencia: str  # handle do título, que diz o layout ao LISP ("" = modelo, sem título)
     contem: bool  # a caixa é a da tabela (vale para "dentro"); False: só a do título
@@ -87,7 +127,9 @@ class Chamada:
     seta: tuple[Ponto, Ponto, Ponto]  # começo, base da ponta, ponta
     largura_ponta: float
     rotulo: Ponto  # meio da esquerda do rótulo (MTEXT com anexo 4)
-    texto: str  # "[nº] SITUAÇÃO"; vazio: só mais uma seta do mesmo rótulo (o item tem outro lugar)
+    texto: str  # "[nº] SITUAÇÃO: título"; vazio: só mais uma seta do mesmo rótulo (o item tem outro lugar)
+    # Os itens que a seta marca sozinha (vai ao próprio item, sem nuvem: tabela, amontoado). Vazio
+    # quando ela só rotula uma nuvem (do handle ou da região): o item conta pela nuvem.
     itens: tuple[int, ...]
 
 
@@ -99,17 +141,17 @@ class Plano:
 
 @dataclass
 class _Alvo:
+    """Uma ponta de seta de um item: a caixa onde ela chega, na folha do handle `referencia`."""
+    folha: Folha
     caixa: Caixa
     referencia: str
-    linhas: list[Linha]
-    altura: float | None
+    direta: bool  # a seta é a marca (sem nuvem)
 
 
 @dataclass
-class _Grupo:
-    folha: tuple[str, str]
-    caixa: Caixa
-    alvos: list[_Alvo]
+class _Rotulo:
+    linha: Linha
+    alvos: list[_Alvo] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- caixas
@@ -146,6 +188,15 @@ def _centro(c: Caixa) -> Ponto:
     return ((c[0] + c[2]) / 2, (c[1] + c[3]) / 2)
 
 
+def _lado_maior(c: Caixa) -> float:
+    return max(c[2] - c[0], c[3] - c[1])
+
+
+def _folga(c: Caixa, fracao: float) -> Caixa:
+    d = fracao * _lado_maior(c)
+    return (c[0] - d, c[1] - d, c[2] + d, c[3] + d)
+
+
 def caixa_da_nuvem(lugar: Lugar) -> Caixa:
     """A caixa da nuvem que o LISP desenharia em volta do handle (pok-caixa-folgada): a folga é
     1/4 do lado maior ou meia altura do texto, o que for maior."""
@@ -154,30 +205,53 @@ def caixa_da_nuvem(lugar: Lugar) -> Caixa:
     return (x0 - folga, y0 - folga, x1 + folga, y1 + folga)
 
 
+def _mediana(valores) -> float | None:
+    valores = sorted(valores)
+    if not valores:
+        return None
+    meio = len(valores) // 2
+    return valores[meio] if len(valores) % 2 else (valores[meio - 1] + valores[meio]) / 2
+
+
 # ---------------------------------------------------------------- o que o LISP respondeu
 
-def lugares(resposta: list[dict]) -> dict[str, Lugar]:
-    """A resposta do `caixas` (uma linha por handle) como {handle: Lugar}. O handle que o desenho
-    não tem, o de dentro de um bloco (semLugar) e a linha torta ficam de fora."""
-    saida: dict[str, Lugar] = {}
+def lugares(resposta: list[dict]) -> Achados:
+    """A resposta do `caixas` como {handle: Lugar}, com o InfoFolha de cada folha em `folhas`. O
+    handle que o desenho não tem, o de dentro de um bloco (semLugar) e a linha torta ficam de fora."""
+    saida = Achados()
     for linha in resposta:
-        h, caixa, espaco, layout = linha.get("h"), _caixa(linha.get("c")), linha.get("e"), linha.get("l")
-        if not (isinstance(h, str) and h and caixa and espaco in ("modelo", "papel") and isinstance(layout, str)):
+        espaco, layout = linha.get("e"), linha.get("l")
+        if espaco not in ("modelo", "papel") or not isinstance(layout, str):
             continue
         a = linha.get("a")
-        saida[h] = Lugar(h, (espaco, layout), caixa, float(a) if _numero(a) and a > 0 else None)
+        a = float(a) if _numero(a) and a > 0 else None
+        if linha.get("folha") is True:
+            n = linha.get("n")
+            saida.folhas[(espaco, layout)] = InfoFolha(a, n if isinstance(n, int) and n >= 0 else 0,
+                                                       _caixa(linha.get("ext")))
+            continue
+        h, caixa = linha.get("h"), _caixa(linha.get("c"))
+        if isinstance(h, str) and h and caixa:
+            saida[h] = Lugar(h, (espaco, layout), caixa, a)
     return saida
 
 
-def handles_das_tabelas(p: dict) -> list[str]:
-    """Os títulos das tabelas do parecer: o `caixas` diz em que layout cada uma está."""
+def handles_das_regioes(p: dict) -> list[str]:
+    """Os títulos das regiões do parecer (todas: tabelas e vistas, de todos os itens): o `caixas`
+    diz em que layout cada uma está, para a tabela tirar a nuvem do que está dentro dela e a coluna
+    de fora apontar a nuvem da região."""
     saida: list[str] = []
     for item in p.get("itens") or []:
-        r = item.get("regiao")
-        achada = regiao_achada(r) if isinstance(r, dict) and r.get("tipo") in TIPOS_TABELA else None
-        if achada and achada["handleTitulo"] and achada["handleTitulo"] not in saida:
-            saida.append(achada["handleTitulo"])
+        outras = item.get("outrasRegioes") if isinstance(item.get("outrasRegioes"), list) else []
+        for r in [item.get("regiao"), *outras]:
+            achada = regiao_achada(r)
+            if achada and achada["handleTitulo"] and achada["handleTitulo"] not in saida:
+                saida.append(achada["handleTitulo"])
     return saida
+
+
+# O servidor pede os títulos por este nome (0.3.4, quando só as tabelas importavam).
+handles_das_tabelas = handles_das_regioes
 
 
 def tabelas(p: dict, achados: dict[str, Lugar]) -> list[Tabela]:
@@ -196,8 +270,21 @@ def tabelas(p: dict, achados: dict[str, Lugar]) -> list[Tabela]:
             saida.append(Tabela(chave_regiao(achada), titulo.folha, caixa or titulo.caixa, titulo.handle,
                                 caixa is not None))
         elif caixa and achada["espaco"] != "papel":
-            saida.append(Tabela(chave_regiao(achada), ("modelo", "Model"), caixa, "", True))
+            saida.append(Tabela(chave_regiao(achada), MODELO, caixa, "", True))
     return saida
+
+
+def lugar_da_regiao(regiao: dict, achados: dict[str, Lugar]) -> tuple[Folha, Caixa, str] | None:
+    """(folha, caixa da nuvem, handle de referência) de uma região achada (marcas.regiao_achada), como
+    o LISP a acha e a nuvem dela (pok-lugar-regiao): título achado, no layout dele, a caixa da região
+    com folga de 2% ou, sem caixa, a nuvem do título; sem o título, a caixa vale no modelo."""
+    titulo = achados.get(regiao["handleTitulo"]) if regiao["handleTitulo"] else None
+    caixa = tuple(regiao["caixa"]) if regiao["caixa"] else None
+    if titulo:
+        return titulo.folha, _folga(caixa, FOLGA_REGIAO) if caixa else caixa_da_nuvem(titulo), titulo.handle
+    if caixa and regiao["espaco"] != "papel":
+        return MODELO, _folga(caixa, FOLGA_REGIAO), ""
+    return None
 
 
 # ---------------------------------------------------------------- o plano
@@ -247,67 +334,77 @@ def _amontoados(handles: list[str], achados: dict[str, Lugar]) -> list[list[str]
 
 
 def planejar(linhas: list[Linha], achados: dict[str, Lugar], tabelas_achadas: list[Tabela]) -> Plano:
-    """Divide as marcas entre nuvens e chamadas e decide onde fica cada chamada. A linha sem
-    handle achado e sem tabela fica de fora: vai para a nuvem da região (servidor)."""
+    """Divide as marcas dos handles entre nuvens e setas diretas e põe o rótulo de cada item (com as
+    setas até as marcas dele) na coluna de fora do desenho da folha."""
     por_handle: dict[str, list[Linha]] = {}
     for linha in linhas:
         for h in linha.handles:
             if h in achados:
                 por_handle.setdefault(h, []).append(linha)
 
-    grupos: dict[tuple, _Grupo] = {}
-
-    def no_grupo(chave: tuple, folha: tuple[str, str], caixa: Caixa, alvo: _Alvo) -> None:
-        grupo = grupos.setdefault(chave, _Grupo(folha, caixa, []))
-        grupo.alvos.append(alvo)
-        grupo.caixa = _uniao([grupo.caixa, alvo.caixa])
-
-    soltos = []
-    for h, ls in por_handle.items():
-        lugar = achados[h]
-        tabela = next((t for t in tabelas_achadas if t.contem and t.folha == lugar.folha
-                       and _dentro(_centro(lugar.caixa), t.caixa)), None)
-        if tabela:
-            no_grupo(("tabela", tabela.chave), tabela.folha, tabela.caixa, _Alvo(lugar.caixa, h, ls, lugar.altura))
-        else:
-            soltos.append(h)
-    amontoados = _amontoados(soltos, achados)
-    em_amontoado = {h for g in amontoados for h in g}
-    for indice, grupo in enumerate(amontoados):
-        for h in grupo:
-            lugar = achados[h]
-            no_grupo(("amontoado", indice), lugar.folha, lugar.caixa, _Alvo(lugar.caixa, h, por_handle[h], lugar.altura))
-
-    com_handle = {x.numero for ls in por_handle.values() for x in ls}
-    por_chave = {t.chave: t for t in tabelas_achadas}
-    for linha in linhas:
-        tabela = por_chave.get(chave_regiao(linha.regiao)) if linha.regiao else None
-        if linha.numero not in com_handle and tabela:
-            no_grupo(("tabela", tabela.chave), tabela.folha, tabela.caixa,
-                     _Alvo(tabela.caixa, tabela.referencia, [linha], None))
-
+    soltos = [h for h in por_handle
+              if not any(t.contem and t.folha == achados[h].folha and _dentro(_centro(achados[h].caixa), t.caixa)
+                         for t in tabelas_achadas)]
+    em_amontoado = {h for g in _amontoados(soltos, achados) for h in g}
     nuvens = [h for h in soltos if h not in em_amontoado]
+    com_nuvem = set(nuvens)
+
+    por_chave = {t.chave: t for t in tabelas_achadas}
+    rotulos: dict[tuple[Folha, int], _Rotulo] = {}
+
+    def alvo(linha: Linha, a: _Alvo) -> None:
+        rotulos.setdefault((a.folha, linha.numero), _Rotulo(linha)).alvos.append(a)
+
+    for linha in linhas:
+        handles = [h for h in linha.handles if h in achados]
+        tabela = por_chave.get(chave_regiao(linha.regiao)) if linha.regiao else None
+        if handles:
+            for h in handles:
+                lugar = achados[h]
+                if h in com_nuvem:
+                    alvo(linha, _Alvo(lugar.folha, caixa_da_nuvem(lugar), h, False))
+                else:
+                    alvo(linha, _Alvo(lugar.folha, lugar.caixa, h, True))
+        elif tabela:
+            alvo(linha, _Alvo(tabela.folha, tabela.caixa, tabela.referencia, True))
+        else:
+            # Sem handle: a nuvem de cada região achada (servidor); a seta só a rotula.
+            for regiao in linha.regioes:
+                if achada := lugar_da_regiao(regiao, achados):
+                    alvo(linha, _Alvo(achada[0], achada[1], achada[2], False))
+
     plano = Plano(nuvens=[marca_do_handle(h, por_handle[h]) for h in nuvens], chamadas=[])
-    # Obstáculos de cada layout: as tabelas e as colunas já postas. As nuvens não: a de uma
-    # polilinha comprida (o lote, a moldura) cobre meia folha e jogaria a coluna para longe
-    # (prancha real 02, simulada: a coluna do carimbo ia 270 unidades para a direita).
-    ocupado: dict[tuple[str, str], list[Caixa]] = {}
-    for t in tabelas_achadas:
-        ocupado.setdefault(t.folha, []).append(t.caixa)
-    ordem = [("tabela", t.chave) for t in tabelas_achadas] + [("amontoado", i) for i in range(len(amontoados))]
-    for chave in ordem:
-        if chave in grupos:
-            plano.chamadas += _coluna(grupos[chave], ocupado.setdefault(grupos[chave].folha, []))
+    folhas = list(dict.fromkeys(folha for folha, _ in rotulos))
+    for folha in folhas:
+        da_folha = sorted((r for (f, _), r in rotulos.items() if f == folha), key=lambda r: r.linha.numero)
+        desenho = extensao(folha, achados, tabelas_achadas, [a for r in da_folha for a in r.alvos])
+        plano.chamadas += _colunas(folha, da_folha, desenho, altura_do_texto(folha, achados, desenho))
     return plano
 
 
-def _altura(grupo: _Grupo) -> float:
-    alturas = sorted(a.altura for a in grupo.alvos if a.altura)
-    if alturas:
-        meio = len(alturas) // 2
-        return alturas[meio] if len(alturas) % 2 else (alturas[meio - 1] + alturas[meio]) / 2
-    x0, y0, x1, y1 = grupo.caixa
-    return max(max(x1 - x0, y1 - y0) / ALTURA_SEM_TEXTO, 1e-3)
+def extensao(folha: Folha, achados: dict[str, Lugar], tabelas_achadas: list[Tabela], alvos: list[_Alvo]) -> Caixa:
+    """O desenho da folha: a extensão que o LISP mediu, mais tudo o que se conhece nela (handles
+    achados, tabelas, as nuvens e regiões que as setas apontam)."""
+    info = getattr(achados, "folhas", {}).get(folha)
+    caixas = [lugar.caixa for lugar in achados.values() if lugar.folha == folha]
+    caixas += [t.caixa for t in tabelas_achadas if t.folha == folha] + [a.caixa for a in alvos]
+    if info and info.extensao:
+        caixas.append(info.extensao)
+    return _uniao(caixas)
+
+
+def altura_do_texto(folha: Folha, achados: dict[str, Lugar], desenho: Caixa) -> float:
+    """A altura das marcas na folha: o texto comum (o do LISP; sem texto solto na folha, a mediana
+    dos textos achados nela, como os atributos do carimbo), entre 1/PISO_TEXTO e 1/TETO_TEXTO do
+    lado maior do desenho; sem texto nenhum, 1/SEM_TEXTO dele."""
+    info = getattr(achados, "folhas", {}).get(folha)
+    texto = info.texto if info and info.textos and info.texto else None
+    if texto is None:
+        texto = _mediana(lugar.altura for lugar in achados.values() if lugar.folha == folha and lugar.altura)
+    lado = max(_lado_maior(desenho), 1e-3)
+    if texto is None:
+        return lado / SEM_TEXTO
+    return min(max(texto, lado / PISO_TEXTO), lado / TETO_TEXTO)
 
 
 def _seta(inicio: Ponto, caixa: Caixa, a: float) -> tuple[Ponto, Ponto, Ponto]:
@@ -323,34 +420,36 @@ def _seta(inicio: Ponto, caixa: Caixa, a: float) -> tuple[Ponto, Ponto, Ponto]:
     return (inicio, base, ponta)
 
 
-def _coluna(grupo: _Grupo, ocupado: list[Caixa]) -> list[Chamada]:
-    """Um rótulo por item do grupo, na ordem dos números, numa coluna à direita do grupo, livre do
-    que já ocupa o layout; uma seta do rótulo a cada lugar do item no grupo (as setas além da 1ª
-    vão sem texto)."""
-    por_item: dict[int, tuple[Linha, list[_Alvo]]] = {}
-    for alvo in sorted(grupo.alvos, key=lambda alvo: alvo.referencia):
-        for linha in alvo.linhas:
-            por_item.setdefault(linha.numero, (linha, []))[1].append(alvo)
-    numeros = sorted(por_item)
-    a = _altura(grupo)
-    textos = {n: f"[{n}] {ROTULO[por_item[n][0].situacao]}" for n in numeros}
-    largura = max(len(t) for t in textos.values()) * LARGURA_LETRA * a
-    ys = [grupo.caixa[3] - a - i * PASSO * a for i in range(len(numeros))]
-    x = grupo.caixa[2] + FOLGA_COLUNA * a
-    while True:
-        coluna = (x, ys[-1] - MEIA_FAIXA * a, x + largura, ys[0] + MEIA_FAIXA * a)
-        batem = [o for o in ocupado if _cruzam(coluna, o)]
-        if not batem:
-            break
-        x = max(o[2] for o in batem) + FOLGA_COLUNA * a
-    ocupado.append(coluna)
-    saida = []
-    for n, y in zip(numeros, ys, strict=True):
-        linha, alvos = por_item[n]
-        inicio = (x - RECUO_SETA * a, y)
-        for i, alvo in enumerate(alvos):
-            saida.append(Chamada(alvo.referencia, grupo.folha[0], COR[linha.situacao], a, _seta(inicio, alvo.caixa, a),
-                                 LARGURA_PONTA * a, (x, y), textos[n] if i == 0 else "", (n,)))
+def texto_do_rotulo(linha: Linha) -> str:
+    texto = f"[{linha.numero}] {ROTULO[linha.situacao]}: {linha.titulo}"
+    return texto if len(texto) <= MAXIMO_ROTULO else texto[: MAXIMO_ROTULO - 3] + "..."
+
+
+def _colunas(folha: Folha, rotulos: list[_Rotulo], desenho: Caixa, a: float) -> list[Chamada]:
+    """Os rótulos da folha (na ordem dos números) em duas colunas fora do desenho: à direita os
+    itens cujas marcas estão na metade direita, à esquerda os outros. Cada coluna começa no alto do
+    desenho, a FOLGA_COLUNA alturas da borda, um rótulo a cada PASSO alturas (desce além do desenho
+    se precisar: continua fora dele). A seta sai do lado da coluna que dá para o desenho, na altura
+    do rótulo (na da esquerda, depois do rótulo mais comprido: nenhuma seta passa por outro rótulo),
+    até o ponto mais perto de cada alvo; as setas além da 1ª vão sem texto."""
+    meio = _centro(desenho)[0]
+    lado = [_centro(_uniao(alvo.caixa for alvo in r.alvos))[0] >= meio for r in rotulos]
+    direita = [r for r, d in zip(rotulos, lado, strict=True) if d]
+    esquerda = [r for r, d in zip(rotulos, lado, strict=True) if not d]
+    saida: list[Chamada] = []
+    for coluna, a_direita in ((direita, True), (esquerda, False)):
+        if not coluna:
+            continue
+        textos = [texto_do_rotulo(r.linha) for r in coluna]
+        largura = max(len(t) for t in textos) * LARGURA_LETRA * a
+        x = desenho[2] + FOLGA_COLUNA * a if a_direita else desenho[0] - FOLGA_COLUNA * a - largura
+        for i, (r, texto) in enumerate(zip(coluna, textos, strict=True)):
+            y = desenho[3] - a - i * PASSO * a
+            inicio = (x - RECUO_SETA * a, y) if a_direita else (x + largura + RECUO_SETA * a, y)
+            for j, alvo in enumerate(r.alvos):
+                saida.append(Chamada(alvo.referencia, folha[0], COR[r.linha.situacao], a, _seta(inicio, alvo.caixa, a),
+                                     LARGURA_PONTA * a, (x, y), texto if j == 0 else "",
+                                     (r.linha.numero,) if alvo.direta else ()))
     return saida
 
 

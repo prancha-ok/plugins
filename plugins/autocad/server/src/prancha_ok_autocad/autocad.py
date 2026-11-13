@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -26,6 +27,12 @@ from .pedido import chamada, marca, pedacos_quadro, pedido_lisp, regiao
 
 INTERVALO_S = 0.1
 PRAZO_PADRAO_S = 20.0
+#: O canal com o AutoCAD (0.7.0): todo pedido ao LISP o pega, e a ponte do desenho profissional (ponte.py) também,
+#: durante cada chamada no COM. Sem ele, o AutoCAD recusa o COM com um comando LISP em andamento
+#: (RPC_E_CALL_REJECTED) e o pedido do LISP entra numa linha de comando ocupada pelo COM.
+canal_autocad = threading.Lock()
+#: Quanto um pedido ao LISP espera o canal (a chamada do desenho profissional tem prazo de 45 s, mais a folga).
+PRAZO_CANAL_S = 60.0
 
 
 class AutocadIndisponivel(RuntimeError):
@@ -254,7 +261,19 @@ def _ler(caminho: Path) -> str:
 
 
 def pedir(comando: str, *argumentos, prazo_s: float = PRAZO_PADRAO_S) -> list[dict]:
-    """Manda o comando ao LISP e devolve as linhas JSON da resposta (a 1ª tem `ok`)."""
+    """Manda o comando ao LISP e devolve as linhas JSON da resposta (a 1ª tem `ok`). Um pedido por vez no AutoCAD,
+    também contra o desenho profissional (`canal_autocad`)."""
+    if not canal_autocad.acquire(timeout=PRAZO_CANAL_S):
+        raise AutocadIndisponivel(
+            f"O AutoCAD ficou {PRAZO_CANAL_S:.0f} s ocupado com outro pedido do conector (o desenho profissional) e "
+            f"'{comando}' não foi mandado. Espere ele terminar e tente de novo.")
+    try:
+        return _pedir(comando, *argumentos, prazo_s=prazo_s)
+    finally:
+        canal_autocad.release()
+
+
+def _pedir(comando: str, *argumentos, prazo_s: float) -> list[dict]:
     pasta = pasta_ipc()
     ident = uuid.uuid4().hex[:12]
     pedido = pasta / f"pedido-{ident}.lsp"
@@ -303,8 +322,54 @@ def pedir(comando: str, *argumentos, prazo_s: float = PRAZO_PADRAO_S) -> list[di
             arquivo.unlink(missing_ok=True)
 
 
+def com_do_autocad(prazo_s: float = 5.0) -> dict | None:
+    """O AutoCAD completo pela automação (COM), sem abri-lo: `GetActiveObject` (nunca `Dispatch`, que ABRE um
+    AutoCAD), numa thread com o COM inicializado e prazo curto. {"arquivo": o FullName do desenho ativo, vazio se ele
+    nunca foi salvo, "pasta": a pasta dele ou ""}; None quando o COM não liga (AutoCAD fechado, LT, que não tem COM,
+    ou aberto como administrador). Para o desenho profissional (ponte.py)."""
+    if sys.platform != "win32":
+        return None
+    achado: dict = {}
+
+    def ligar():
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            app = win32com.client.GetActiveObject("AutoCAD.Application")
+            achado["ok"] = True
+            try:
+                achado["arquivo"] = str(app.ActiveDocument.FullName or "")
+            except Exception:  # sem desenho aberto, ou o AutoCAD ocupado: a pasta fica de fora
+                achado["arquivo"] = ""
+        except Exception:
+            pass
+        finally:
+            pythoncom.CoUninitialize()
+
+    t = threading.Thread(target=ligar, name="com-do-autocad", daemon=True)
+    t.start()
+    t.join(prazo_s)
+    if not achado.get("ok"):
+        return None
+    arquivo = achado.get("arquivo") or ""
+    return {"arquivo": arquivo, "pasta": str(Path(arquivo).parent) if arquivo else ""}
+
+
 def info() -> dict:
+    """O desenho aberto: versões, arquivo, vínculo e (0.7.0) o que diz a unidade dele: `insunits`, `ltscale`,
+    `entidadesNoModelo` (fora da camada das marcas, PRANCHAOK-PARECER: o nosso terreno conta; 0 = `vazio`),
+    `alturaDosTextos` (a mediana de até 500 TEXT e MTEXT do modelo fora das nossas camadas, ou null), `textosMedidos`,
+    `programa` (PROGRAM: "acad" ou "acadlt") e `lt` (o AutoCAD LT, sem COM: o autocad-mcp-pro não roda nele)."""
     return pedir("info")[0]
+
+
+def lote() -> list[list[float]] | None:
+    """Os vértices da 1ª polilinha da camada PRANCHAOK-LOTE no modelo (o nosso lote já desenhado), na unidade do
+    desenho, ou None se não há. desenho.casar_lote tira dela a unidade e a origem."""
+    pontos = pedir("lote")[0].get("pontos")
+    return pontos if isinstance(pontos, list) and pontos else None
 
 
 def ler_entidades(prazo_s: float = 120.0) -> list[dict]:
@@ -350,8 +415,9 @@ def marcar_chamadas(lista) -> dict:
 def desenhar(itens: list[list]) -> dict:
     """Acrescenta ao desenho, no espaço do modelo, as entidades de um pedido de desenho.py (0.6.0), num grupo de
     desfazer só. Devolve {criadas, ignoradas, camadas, cotasEmLinhas} (e semDesfazer: true quando o UNDO do AutoCAD
-    está desligado, sem o grupo) e, se a camada do `se-vazio` já tem algo, {jaDesenhado: n} sem desenhar nada. Erro no
-    meio: RecusaDoAutocad, com o `criadas` até o erro na `resposta`."""
+    está desligado, sem o grupo; insunitsGravado: 4 quando o item "insunits-se-vazio" gravou o $INSUNITS do desenho
+    vazio) e, se a camada do `se-vazio` já tem algo, {jaDesenhado: n} sem desenhar nada. Erro no meio:
+    RecusaDoAutocad, com o `criadas` até o erro na `resposta`."""
     return pedir("desenhar", *itens, prazo_s=60.0)[0]
 
 

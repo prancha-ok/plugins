@@ -116,6 +116,10 @@ Com o AutoCAD aberto:
 
 `PRANCHA_OK_API` troca o backend (padrão: produção). Teste local com a VM:
 `claude mcp add prancha-ok --scope user --env PRANCHA_OK_API=http://172.22.0.1:3211 -- …`.
+Extensão de homologação, só para testes: `npm run empacotar:uat -w @prancha-ok/autocad-mcp` gera
+`prancha-ok-autocad-uat-<versão>.mcpb` ("Prancha Ok (homologação)", com o backend e o site da homologação no
+manifesto), que o site de homologação oferece em /autocad; ela convive com a de produção (token e estado de cada
+backend separados), mas use uma cópia do DWG: o vínculo gravado no desenho é de um backend só.
 Código e decisões: `apps/autocad-mcp` e `docs/planos/autocad-mcp.md` no repositório do Prancha Ok.
 O canal com o AutoCAD parte da ideia do [autocad-mcp](https://github.com/puran-water/autocad-mcp)
 (MIT, ver `LICENSE-autocad-mcp`).

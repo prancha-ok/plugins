@@ -29,17 +29,32 @@
 ;;; (`caixas`), decide toda a geometria (chamadas.py) e manda pronta
 ;;; (`chamadas`): aqui só se confere o formato e se desenha.
 ;;;
+;;; Escala e lugar das marcas (DAV-18, call de 26/10/2026: "o texto ficou GIGANTE",
+;;; "melhor os rótulos ficarem do lado de fora do desenho"): `marcar` e `regioes`
+;;; desenham só a nuvem; o rótulo de cada item é uma chamada numa coluna fora do
+;;; desenho. O `caixas` diz, por folha, o texto comum (mediana das alturas) e a
+;;; extensão do desenho; o quadro-resumo usa o texto comum do modelo.
+;;;
 ;;; Desenho (0.6.0, decisão do David D5=c: "o MCP agora desenha"): `desenhar` recebe
 ;;; entidades como DADOS (polilinha, linha, arco, texto, cota; uma por linha do pedido, lidas
 ;;; com `read`) e cria cada uma com entmake, só em camadas PRANCHAOK-* (nunca a das
 ;;; marcas), tudo num UNDO Begin/End: um desfazer volta tudo.
+;;;
+;;; Unidade (0.7.0, contrato C1): os pontos chegam já na unidade do desenho (o MCP
+;;; escala e põe a origem, desenho.py); o item ("unidade" k), o 1º de cada pedido, diz
+;;; quantas unidades do desenho valem um metro (m 1, cm 100, mm 1000), e o que aqui é
+;;; escrito em metros (o estilo da cota, o tracejado, os deslocamentos da cota em linhas)
+;;; vai vezes k. A cota "viva" mostra a própria medida, em metros com duas casas e
+;;; vírgula, por cima do estilo da pessoa (xdata DSTYLE da entidade: DIMLFAC 1/k...); o
+;;; tracejado acerta pela escala da entidade (48), sem mexer no LTSCALE. Só no desenho
+;;; VAZIO o $INSUNITS pode virar 4 (mm): configurar um desenho novo.
 ;;;
 ;;; Escreve no desenho só na camada PRANCHAOK-PARECER (marcas do parecer, que
 ;;; não plotam e que o motor ignora), nas camadas PRANCHAOK-* do `desenhar` (quando a
 ;;; pessoa pede) e no dicionário PRANCHAOK (vínculo com o projeto). Nunca apaga nem
 ;;; altera o que o arquiteto desenhou.
 
-(setq *pok-versao* "0.6.0")
+(setq *pok-versao* "0.7.2")
 (setq *pok-camada* "PRANCHAOK-PARECER")
 (setq *pok-codificacao* nil)
 
@@ -453,19 +468,6 @@
   )
 )
 
-(defun pok-rotulo (caixa espaco texto altura cor)
-  (entmakex
-    (append
-      (list '(0 . "MTEXT") '(100 . "AcDbEntity") (cons 8 *pok-camada*))
-      (pok-cor cor)
-      (if (= (car espaco) "papel") (list '(67 . 1) (cons 410 (cadr espaco))))
-      (list '(100 . "AcDbMText")
-            (list 10 (nth 0 caixa) (+ (nth 3 caixa) (* 0.5 altura)) 0.0)
-            (cons 40 altura) '(71 . 7) (cons 1 texto))
-    )
-  )
-)
-
 ;; Caixa com folga, para a nuvem não encostar no texto marcado.
 (defun pok-caixa-folgada (caixa ed / w h folga)
   (setq w (- (nth 2 caixa) (nth 0 caixa)) h (- (nth 3 caixa) (nth 1 caixa)))
@@ -473,14 +475,11 @@
   (list (- (nth 0 caixa) folga) (- (nth 1 caixa) folga) (+ (nth 2 caixa) folga) (+ (nth 3 caixa) folga))
 )
 
-(defun pok-altura-rotulo (caixa ed)
-  (cond
-    ((cdr (assoc 40 ed)))
-    (t (* 0.15 (max (- (nth 2 caixa) (nth 0 caixa)) (- (nth 3 caixa) (nth 1 caixa)))))
-  )
-)
-
-;; marcas: lista de (handle cor texto...). Devolve as marcadas e as que não têm lugar.
+;; marcas: lista de (handle cor texto...). Só a nuvem: desde a DAV-18 (call de 26/10/2026, "o texto ficou
+;; GIGANTE", "melhor os rótulos ficarem do lado de fora do desenho") o rótulo de cada item é uma chamada numa
+;; coluna fora do desenho (`chamadas`, geometria em chamadas.py); o texto que ainda vem no pedido não se desenha
+;; (era 0,15 do lado da caixa na polilinha e na cota: 6,75 m de letra no lote de 30 m).
+;; Devolve as marcadas e as que não têm lugar.
 (defun pok-marcar (saida marcas / e ed espaco caixa feitas sem)
   (pok-garantir-camada)
   (foreach m marcas
@@ -491,7 +490,6 @@
       (progn
         (setq caixa (pok-caixa-folgada caixa ed))
         (pok-nuvem caixa espaco (cadr m))
-        (pok-rotulo caixa espaco (pok-juntar (cddr m)) (pok-altura-rotulo caixa ed) (cadr m))
         (setq feitas (cons (pok-js (car m)) feitas))
       )
       (setq sem (cons (pok-js (car m)) sem))
@@ -550,26 +548,18 @@
   )
 )
 
-;; Altura do rótulo de uma região: a do texto do título, senão 1/50 do lado maior.
-(defun pok-altura-regiao (caixa ed)
-  (cond
-    ((and ed (cdr (assoc 40 ed))) (cdr (assoc 40 ed)))
-    (t (max (/ (max (- (nth 2 caixa) (nth 0 caixa)) (- (nth 3 caixa) (nth 1 caixa))) 50.0) 1e-3))
-  )
-)
-
-;; regioes: lista de (handle-do-titulo caixa espaco cor texto...). Devolve os índices
-;; (na ordem do pedido) das que ganharam nuvem e das que não se acharam.
-(defun pok-regioes (saida regioes / lugar esp cx ed i feitas sem)
+;; regioes: lista de (handle-do-titulo caixa espaco cor texto...). Só a nuvem, como no `marcar` (DAV-18: o
+;; rótulo de cada item da região é uma chamada na coluna fora do desenho; o da região ia na altura do título).
+;; Devolve os índices (na ordem do pedido) das que ganharam nuvem e das que não se acharam.
+(defun pok-regioes (saida regioes / lugar esp cx i feitas sem)
   (pok-garantir-camada)
   (setq i 0)
   (foreach r regioes
     (setq lugar (if (and (= (type r) 'LIST) (>= (length r) 4)) (pok-lugar-regiao (nth 0 r) (nth 1 r) (nth 2 r))))
     (if lugar
       (progn
-        (setq esp (nth 0 lugar) cx (nth 1 lugar) ed (nth 2 lugar))
+        (setq esp (nth 0 lugar) cx (nth 1 lugar))
         (pok-nuvem cx esp (nth 3 r))
-        (pok-rotulo cx esp (pok-juntar (cddddr r)) (pok-altura-regiao cx ed) (nth 3 r))
         (setq feitas (cons (itoa i) feitas))
       )
       (setq sem (cons (itoa i) sem))
@@ -582,18 +572,115 @@
   )
 )
 
+;; ---------------------------------------------------------------- texto comum e extensão de uma folha (DAV-18)
+
+;; O nome do layout como padrão do wcmatch (o filtro 410 do ssget): os caracteres especiais com a crase na frente.
+(defun pok-escapar-wc (s / i c saida)
+  (setq i 1 saida "")
+  (repeat (strlen s)
+    (setq c (substr s i 1) i (1+ i))
+    (setq saida (strcat saida (if (member c '("#" "@" "." "*" "?" "~" "[" "]" "`" ",")) (strcat "`" c) c)))
+  )
+  saida
+)
+
+;; Caixa (x0 y0 x1 y1) de uma entidade para a extensão do desenho, sem o textbox (o TEXT vai pela altura e por
+;; 0,8 altura por caractere, como chamadas.LARGURA_LETRA). Só os pontos que são lugar: o 10 da HATCH e da
+;; POLYLINE é a elevação (0,0) e o 12 da DIMENSION é o ponto do bloco dela; esses tipos e o POINT (lixo de
+;; importação longe de tudo) não entram. nil se não dá para saber.
+(defun pok-caixa-extensao (ed / tipo p r w h)
+  (setq tipo (cdr (assoc 0 ed)))
+  (cond
+    ((= tipo "TEXT")
+     (setq p (cdr (assoc 10 ed))
+           h (cond ((cdr (assoc 40 ed))) (t 0.0))
+           w (* 0.8 h (strlen (cond ((cdr (assoc 1 ed))) (t ""))))
+           r (cond ((cdr (assoc 50 ed))) (t 0.0)))
+     (if p (pok-limites (pok-cantos p 0.0 0.0 w h r))))
+    ((= tipo "MTEXT") (pok-caixa ed))
+    ((member tipo '("CIRCLE" "ARC"))
+     (setq p (cdr (assoc 10 ed)) r (cdr (assoc 40 ed)))
+     (if (and p (pok-num-p r)) (list (- (car p) r) (- (cadr p) r) (+ (car p) r) (+ (cadr p) r))))
+    ((= tipo "ELLIPSE")
+     (setq p (cdr (assoc 10 ed)) w (cdr (assoc 11 ed)))
+     (if (and p w)
+       (progn
+         (setq r (distance (list 0.0 0.0) (list (car w) (cadr w))))
+         (list (- (car p) r) (- (cadr p) r) (+ (car p) r) (+ (cadr p) r)))))
+    ;; A VIEWPORT 1 é a própria folha do papel.
+    ((and (= tipo "VIEWPORT") (/= 1 (cdr (assoc 69 ed))))
+     (setq p (cdr (assoc 10 ed)) w (cdr (assoc 40 ed)) h (cdr (assoc 41 ed)))
+     (if (and p (pok-num-p w) (pok-num-p h))
+       (list (- (car p) (/ w 2.0)) (- (cadr p) (/ h 2.0)) (+ (car p) (/ w 2.0)) (+ (cadr p) (/ h 2.0)))))
+    ((member tipo '("LINE" "SPLINE" "MLINE")) (pok-limites-ou-nil (pok-pontos-de ed '(10 11))))
+    ((member tipo '("LWPOLYLINE" "LEADER" "INSERT")) (pok-limites-ou-nil (pok-pontos-de ed '(10))))
+    ((member tipo '("SOLID" "TRACE" "3DFACE" "WIPEOUT")) (pok-limites-ou-nil (pok-pontos-de ed '(10 11 12 13))))
+    ((= tipo "DIMENSION") (pok-limites-ou-nil (pok-pontos-de ed '(10 11 13 14))))
+  )
+)
+
+(defun pok-limites-ou-nil (pts) (if pts (pok-limites pts)))
+
+;; (mínimo quantil-1% quantil-99% máximo) de uma lista de números (o vl-sort-i guarda os repetidos).
+(defun pok-quantis (l / ordem n)
+  (setq ordem (vl-sort-i l '<) n (length l))
+  (mapcar '(lambda (q) (nth (nth (fix (* q (1- n))) ordem) l)) '(0.0 0.01 0.99 1.0))
+)
+
+;; A extensão sem o que está longe de tudo: cada lado é o da entidade mais longe, salvo quando ela passa do
+;; núcleo (entre os quantis de 1% e 99%) por mais que o tamanho do núcleo (uma linha perdida a quilômetros).
+(defun pok-extensao-robusta (x0s y0s x1s y1s / qx0 qy0 qx1 qy1 d)
+  (setq qx0 (pok-quantis x0s) qy0 (pok-quantis y0s) qx1 (pok-quantis x1s) qy1 (pok-quantis y1s)
+        d (max (- (nth 2 qx1) (nth 1 qx0)) (- (nth 2 qy1) (nth 1 qy0))))
+  (list (if (> (- (nth 1 qx0) (nth 0 qx0)) d) (nth 1 qx0) (nth 0 qx0))
+        (if (> (- (nth 1 qy0) (nth 0 qy0)) d) (nth 1 qy0) (nth 0 qy0))
+        (if (> (- (nth 3 qx1) (nth 2 qx1)) d) (nth 2 qx1) (nth 3 qx1))
+        (if (> (- (nth 3 qy1) (nth 2 qy1)) d) (nth 2 qy1) (nth 3 qy1)))
+)
+
+;; O texto comum e a extensão de um layout ("Model" = o modelo), fora da camada das marcas: (mediana das alturas
+;; dos TEXT e MTEXT, até 2000; quantos textos entraram; extensão robusta ou nil). Acima de 200 mil entidades, uma
+;; a cada `passo`. O texto comum é a escala das marcas (DAV-18): o rótulo, a seta e o quadro-resumo na altura de
+;; um texto do próprio desenho, no espaço onde vão.
+(defun pok-folha (layout / ss n passo i ed tipo h cx alturas nt x0s y0s x1s y1s)
+  (setq nt 0)
+  (if (setq ss (ssget "_X" (list (cons 410 (pok-escapar-wc layout)) (cons 8 (strcat "~" *pok-camada*)))))
+    (progn
+      (setq n (sslength ss) passo (1+ (/ n 200000)) i 0)
+      (while (< i n)
+        (setq ed (entget (ssname ss i)) tipo (cdr (assoc 0 ed)) i (+ i passo))
+        (if (and (< nt 2000) (member tipo '("TEXT" "MTEXT")) (pok-num-p (setq h (cdr (assoc 40 ed)))) (> h 0))
+          (setq alturas (cons (float h) alturas) nt (1+ nt)))
+        (if (setq cx (pok-caixa-extensao ed))
+          (setq x0s (cons (float (nth 0 cx)) x0s) y0s (cons (float (nth 1 cx)) y0s)
+                x1s (cons (float (nth 2 cx)) x1s) y1s (cons (float (nth 3 cx)) y1s)))
+      )
+    )
+  )
+  (list (pok-mediana alturas) nt (if x0s (pok-extensao-robusta x0s y0s x1s y1s)))
+)
+
+;; A altura das marcas: o texto comum, entre 1/2000 e 1/60 do lado maior da extensão; sem texto, 1/300 dele
+;; (os mesmos números de chamadas.py: PISO_TEXTO, TETO_TEXTO, SEM_TEXTO).
+(defun pok-altura-das-marcas (texto lado)
+  (if texto (max (/ lado 2000.0) (min texto (/ lado 60.0))) (/ lado 300.0))
+)
+
 ;; ---------------------------------------------------------------- chamadas (0.3.4)
 
 ;; caixas: lista de handles. Responde {"ok":true} e uma linha por handle: o espaço, o layout,
 ;; a caixa (pok-caixa, sem folga) e a altura do texto (null se não é texto), ou semLugar (o
-;; desenho não tem o handle, ou ele está dentro de um bloco, onde a nuvem também não vai).
-(defun pok-caixas (saida handles / e ed esp cx)
+;; desenho não tem o handle, ou ele está dentro de um bloco, onde a nuvem também não vai). Depois,
+;; uma linha por folha (espaço e layout) dos handles achados (DAV-18): {"folha":true, e, l, a: o texto
+;; comum, n: quantos textos, ext: a extensão}, de onde chamadas.py tira a altura e a coluna de fora.
+(defun pok-caixas (saida handles / e ed esp cx folhas info)
   (write-line "{\"ok\":true}" saida)
   (foreach h handles
     (setq e (if (and (= (type h) 'STR) (/= h "")) (handent h))
           ed (if e (entget e))
           esp (if ed (pok-espaco ed))
           cx (if (and esp (member (car esp) '("modelo" "papel"))) (pok-caixa ed)))
+    (if (and cx (not (member esp folhas))) (setq folhas (append folhas (list esp))))
     (write-line
       (if cx
         (strcat "{\"h\":" (pok-js h) ",\"e\":" (pok-js (car esp)) ",\"l\":" (pok-js (cadr esp))
@@ -602,6 +689,15 @@
                 "}")
         (strcat "{\"h\":" (pok-js (if (= (type h) 'STR) h "")) ",\"semLugar\":true}")
       )
+      saida
+    )
+  )
+  (foreach esp folhas
+    (setq info (pok-folha (cadr esp)))
+    (write-line
+      (strcat "{\"folha\":true,\"e\":" (pok-js (car esp)) ",\"l\":" (pok-js (cadr esp))
+              ",\"a\":" (pok-jn (nth 0 info)) ",\"n\":" (itoa (nth 1 info))
+              ",\"ext\":" (if (nth 2 info) (pok-jlista (mapcar 'pok-jn (nth 2 info))) "null") "}")
       saida
     )
   )
@@ -728,11 +824,17 @@
 ;; Quadro com os itens do parecer, na camada das marcas, à direita do desenho (model
 ;; space): o parecer aparece dentro do DWG, inclusive os itens sem lugar no desenho.
 ;; Não apaga o anterior: o `limpar` (que o MCP chama antes de marcar) tira tudo da camada.
-(defun pok-quadro (saida texto / emin emax altura x y)
+;; DAV-18 (call de 26/10/2026, "a legenda é boa, mas também ficou grande"): a letra é a do texto comum do modelo
+;; (pok-altura-das-marcas), não 1/90 da altura do EXTMIN/EXTMAX, que é a do espaço aberto (com um layout aberto,
+;; o papel em mm virava metros no modelo) e não encolhe quando se apaga; o quadro fica à direita do desenho e
+;; das chamadas já postas (a coluna da direita).
+(defun pok-quadro (saida texto / info ext lado altura x y)
   (pok-garantir-camada)
-  (setq emin (getvar "EXTMIN") emax (getvar "EXTMAX"))
-  (setq altura (max (/ (- (cadr emax) (cadr emin)) 90.0) 1e-3))
-  (setq x (+ (car emax) (* 4 altura)) y (cadr emax))
+  (setq info (pok-folha "Model")
+        ext (cond ((nth 2 info)) (t (list 0.0 0.0 1.0 1.0)))
+        lado (max (- (nth 2 ext) (nth 0 ext)) (- (nth 3 ext) (nth 1 ext)) 1e-3)
+        altura (pok-altura-das-marcas (nth 0 info) lado))
+  (setq x (+ (max (nth 2 ext) (cond ((pok-x-das-marcas)) (t (nth 2 ext)))) (* 4 altura)) y (nth 3 ext))
   (entmakex
     (append
       (list '(0 . "MTEXT") '(100 . "AcDbEntity") (cons 8 *pok-camada*) '(100 . "AcDbMText")
@@ -741,6 +843,24 @@
     )
   )
   (write-line "{\"ok\":true}" saida)
+)
+
+;; O x mais à direita das marcas já postas no modelo (nuvens, setas e rótulos), ou nil. O rótulo da chamada
+;; (MTEXT sem largura) vale 0,8 altura por caractere, como em chamadas.py.
+(defun pok-x-das-marcas ( / ss i ed cx x)
+  (if (setq ss (ssget "_X" (list (cons 410 "Model") (cons 8 (pok-escapar-wc *pok-camada*)))))
+    (progn
+      (setq i 0)
+      (repeat (sslength ss)
+        (setq ed (entget (ssname ss i)) i (1+ i))
+        (if (setq cx (pok-caixa-extensao ed)) (setq x (if x (max x (nth 2 cx)) (nth 2 cx))))
+        (if (= (cdr (assoc 0 ed)) "MTEXT")
+          (setq x (max x (+ (car (cdr (assoc 10 ed)))
+                            (* 0.8 (cdr (assoc 40 ed)) (strlen (pok-texto-mtext ed)))))))
+      )
+    )
+  )
+  x
 )
 
 ;; QSAVE do desenho aberto (só com o consentimento da pessoa: quem pede é o MCP).
@@ -758,13 +878,21 @@
 
 ;; O pedido do `desenhar` (desenho.py): um item por linha, sempre dados.
 ;;   ("se-vazio" camada)                      1º item, opcional: com algo nessa camada, não desenha nada
-;;   ("camada" nome cor tipo-de-linha [imprime])  cria a camada se ela não existe (a que existe fica como
-;;                                            está); imprime 0: a camada não plota (o padrão é plotar)
+;;   ("unidade" k)                            unidades do desenho por metro (0.7.0); sem ele, 1 (metros)
+;;   ("insunits-se-vazio" 4)                  grava o $INSUNITS (4 mm, 5 cm, 6 m) só se o modelo não tem nada
+;;                                            fora das camadas PRANCHAOK-*
+;;   ("camada" nome cor tipo-de-linha [imprime [espessura]])  cria a camada se ela não existe (a que existe fica
+;;                                            como está); imprime 0: não plota (o padrão é plotar); espessura:
+;;                                            a de linha em centésimos de mm (código 370: 50 = 0,50 mm)
 ;;   ("polilinha" camada fechada x y x y ...) fechada: 1 ou 0
 ;;   ("linha" camada x1 y1 x2 y2 tipo)        tipo: "" (o da camada), "DASHED", "CONTINUOUS"...
 ;;   ("arco" camada xc yc raio inicio fim)    ângulos em graus, anti-horário de inicio a fim (a folha da porta)
 ;;   ("texto" camada x y altura giro alinhamento texto...)  giro em graus; "esquerda" ou "centro"
 ;;   ("cota" camada x1 y1 x2 y2 xl yl texto...)  (xl yl): a ponta da linha de cota do lado de (x2 y2)
+;;   ("cota-viva" camada x1 y1 x2 y2 xl yl texto...)  a mesma, mostrando a medida do AutoCAD (o texto só vale
+;;                                            na cota em linhas, quando a DIMENSION não entra)
+;;   ("hachura" camada cor n x y ... n x y ...)  hachura sólida (SOLID): cada contorno, o número de vértices e
+;;                                            os vértices; cor ACI, 256 = a da camada
 ;;   ("zoom" x0 y0 x1 y1)
 ;;   ("+" ...)                                continua o item de cima (mais pontos, mais texto): a
 ;;                                            linha do pedido não passa de 250 caracteres
@@ -791,9 +919,15 @@
   (if (and (> a (/ pi 2)) (<= a (* 1.5 pi))) (- a pi) a)
 )
 
+;; Unidades do desenho por metro no pedido que está sendo desenhado (o `por-metro` do pok-desenhar, escopo
+;; dinâmico), ou 1.
+(defun pok-k ()
+  (if (and (pok-num-p por-metro) (> por-metro 0)) (float por-metro) 1.0)
+)
+
 ;; O tipo de linha pronto para usar, ou nil (fica o da camada). CONTINUOUS sempre existe; DASHED, se o desenho
-;; não tem, é criado com o padrão do DXF do site (lib/dxfDoTerreno.ts: traço 1,0 e espaço 0,5, em metros), sem
-;; depender de achar o acad.lin (o LT tem outro arquivo); o DASHED que o desenho já tem fica como está.
+;; não tem, é criado com o padrão do DXF do site (lib/dxfDoTerreno.ts: traço 1,0 e espaço 0,5, em metros, vezes
+;; k), sem depender de achar o acad.lin (o LT tem outro arquivo); o DASHED que o desenho já tem fica como está.
 (defun pok-tipo-linha (nome / n)
   (if (= (type nome) 'STR) (setq n (strcase nome)))
   (cond
@@ -803,22 +937,49 @@
     ((= n "DASHED")
      (entmake (list (cons 0 "LTYPE") (cons 100 "AcDbSymbolTableRecord") (cons 100 "AcDbLinetypeTableRecord")
                     (cons 2 "DASHED") (cons 70 0) (cons 3 "Dashed __ __ __") (cons 72 65) (cons 73 2)
-                    (cons 40 1.5) (cons 49 1.0) (cons 74 0) (cons 49 -0.5) (cons 74 0)))
+                    (cons 40 (* 1.5 (pok-k))) (cons 49 (* 1.0 (pok-k))) (cons 74 0)
+                    (cons 49 (* -0.5 (pok-k))) (cons 74 0)))
      (if (tblsearch "LTYPE" "DASHED") "DASHED"))
   )
 )
 
-;; Cria a camada que falta (cor ACI, tipo de linha e, com imprime 0, sem plotar: 290 = 0); T se criou. A que já
-;; existe não muda.
-(defun pok-camada-desenho (nome cor tipo imprime / tl)
+;; A escala da entidade (48) que dá ao DASHED um período de 1,5 m no desenho, qualquer que seja o padrão dele (o
+;; nosso, 1,5 m; o do acadiso.lin, 19,05) e o LTSCALE da pessoa, que fica como está: 1,5 k / (padrão x LTSCALE).
+;; nil sem DASHED no desenho ou com número que não serve.
+(defun pok-escala-tracejado ( / tl padrao lts)
+  (setq tl (tblsearch "LTYPE" "DASHED")
+        padrao (if tl (cdr (assoc 40 tl)))
+        lts (getvar "LTSCALE"))
+  (if (and (pok-num-p padrao) (> padrao 0) (pok-num-p lts) (> lts 0))
+    (/ (* 1.5 (pok-k)) (* padrao lts))
+  )
+)
+
+;; O (48 . escala) da entidade que sai tracejada: o tipo dela é DASHED ou, sem tipo (o da camada), a camada é
+;; DASHED. Senão nil.
+(defun pok-48 (camada tl / lay celt)
+  (if (and (or (null tl) (= tl "")) (setq lay (tblsearch "LAYER" camada))) (setq tl (cdr (assoc 6 lay))))
+  (if (and (= (type tl) 'STR) (= (strcase tl) "DASHED") (setq celt (pok-escala-tracejado)))
+    (list (cons 48 celt))
+  )
+)
+
+;; As espessuras de linha que a camada aceita (código 370, centésimos de mm; DXF Reference, LAYER).
+(setq *pok-espessuras* '(0 5 9 13 15 18 20 25 30 35 40 50 53 60 70 80 90 100 106 120 140 158 200 211))
+
+;; Cria a camada que falta (cor ACI, tipo de linha, com imprime 0 sem plotar: 290 = 0, e a espessura de linha:
+;; 370); T se criou. A que já existe não muda.
+(defun pok-camada-desenho (nome cor tipo imprime espessura / tl)
   (if (and (pok-camada-desenho-p nome) (not (tblsearch "LAYER" nome)))
     (progn
       (setq tl (cond ((pok-tipo-linha tipo)) (t "Continuous")))
-      (entmake (list (cons 0 "LAYER") (cons 100 "AcDbSymbolTableRecord") (cons 100 "AcDbLayerTableRecord")
-                     (cons 2 nome) (cons 70 0)
-                     (cons 62 (if (and (= (type cor) 'INT) (> cor 0) (< cor 256)) cor 7))
-                     (cons 6 tl)
-                     (cons 290 (if (= imprime 0) 0 1))))
+      (entmake (append
+                 (list (cons 0 "LAYER") (cons 100 "AcDbSymbolTableRecord") (cons 100 "AcDbLayerTableRecord")
+                       (cons 2 nome) (cons 70 0)
+                       (cons 62 (if (and (= (type cor) 'INT) (> cor 0) (< cor 256)) cor 7))
+                       (cons 6 tl)
+                       (cons 290 (if (= imprime 0) 0 1)))
+                 (if (and (= (type espessura) 'INT) (member espessura *pok-espessuras*)) (list (cons 370 espessura)))))
       (if (tblsearch "LAYER" nome) T)
     )
   )
@@ -839,8 +1000,9 @@
            (>= (length (setq pts (pok-pares (cddr a)))) 2))
     (entmakex
       (append
-        (list (cons 0 "LWPOLYLINE") (cons 100 "AcDbEntity") (cons 8 (car a)) (cons 100 "AcDbPolyline")
-              (cons 90 (length pts)) (cons 70 (nth 1 a)))
+        (list (cons 0 "LWPOLYLINE") (cons 100 "AcDbEntity") (cons 8 (car a)))
+        (pok-48 (car a) nil)
+        (list (cons 100 "AcDbPolyline") (cons 90 (length pts)) (cons 70 (nth 1 a)))
         (mapcar '(lambda (p) (cons 10 p)) pts)
       )
     )
@@ -856,6 +1018,7 @@
         (append
           (list (cons 0 "LINE") (cons 100 "AcDbEntity") (cons 8 (car a)))
           (if tl (list (cons 6 tl)))
+          (pok-48 (car a) tl)
           (list (cons 100 "AcDbLine") (cons 10 (pok-pt (nth 1 a) (nth 2 a))) (cons 11 (pok-pt (nth 3 a) (nth 4 a))))
         )
       )
@@ -869,9 +1032,12 @@
            (= (length a) 6)
            (> (nth 3 a) 0))
     (entmakex
-      (list (cons 0 "ARC") (cons 100 "AcDbEntity") (cons 8 (car a)) (cons 100 "AcDbCircle")
-            (cons 10 (pok-pt (nth 1 a) (nth 2 a))) (cons 40 (float (nth 3 a)))
-            (cons 100 "AcDbArc") (cons 50 (* (nth 4 a) (/ pi 180.0))) (cons 51 (* (nth 5 a) (/ pi 180.0))))
+      (append
+        (list (cons 0 "ARC") (cons 100 "AcDbEntity") (cons 8 (car a)))
+        (pok-48 (car a) nil)
+        (list (cons 100 "AcDbCircle") (cons 10 (pok-pt (nth 1 a) (nth 2 a))) (cons 40 (float (nth 3 a)))
+              (cons 100 "AcDbArc") (cons 50 (* (nth 4 a) (/ pi 180.0))) (cons 51 (* (nth 5 a) (/ pi 180.0))))
+      )
     )
   )
 )
@@ -900,38 +1066,50 @@
 
 ;; A cota alinhada como DIMENSION (70 = 1 alinhada + 32 bloco só dela): 13 e 14 as pontas medidas, 10 a ponta da
 ;; linha de cota do lado do 14, 11 o meio do texto, 1 a medida escrita. Sem o código 2, o AutoCAD faz o bloco *D.
-;; O estilo vai por cima do estilo atual (xdata DSTYLE), com os números do estilo do DXF do site: o desenho é em
-;; metros, e o estilo do escritório (em mm, ou com DIMSCALE 50) faria o texto sumir ou cobrir o lote.
-(defun pok-dimension (camada p1 p2 pl meio txt)
+;; O estilo vai por cima do estilo atual (xdata DSTYLE, só nesta entidade: o estilo da pessoa não muda), com os
+;; números do estilo do DXF do site, em metros, e o DIMSCALE k (o desenho em mm: tudo 1000 vezes maior). A cota
+;; viva (`viva`) tem o 1 vazio (a medida do AutoCAD) e mostra metros: DIMLFAC 1/k, DIMDEC 2, DIMDSEP "," (44),
+;; DIMZIN 0 ("2,00", nunca "2"), DIMRND 0, DIMLUNIT 2 (decimal) e DIMALT 0 (sem as unidades alternativas).
+(defun pok-dimension (camada p1 p2 pl meio txt viva)
   (entmakex
     (list (cons 0 "DIMENSION") (cons 100 "AcDbEntity") (cons 8 camada) (cons 100 "AcDbDimension")
-          (cons 10 pl) (cons 11 meio) (cons 70 33) (cons 1 txt) (cons 100 "AcDbAlignedDimension")
+          (cons 10 pl) (cons 11 meio) (cons 70 33) (cons 1 (if viva "" txt)) (cons 100 "AcDbAlignedDimension")
           (cons 13 p1) (cons 14 p2)
-          (list -3 (list "ACAD" (cons 1000 "DSTYLE") (cons 1002 "{")
-                         (cons 1070 40) (cons 1040 1.0)     ; DIMSCALE
-                         (cons 1070 41) (cons 1040 0.2)     ; DIMASZ
-                         (cons 1070 42) (cons 1040 0.1)     ; DIMEXO
-                         (cons 1070 44) (cons 1040 0.1)     ; DIMEXE
-                         (cons 1070 140) (cons 1040 0.25)   ; DIMTXT
-                         (cons 1070 142) (cons 1040 0.1)    ; DIMTSZ (traço de arquitetura)
-                         (cons 1070 147) (cons 1040 0.1)    ; DIMGAP
-                         (cons 1070 77) (cons 1070 1)       ; DIMTAD (texto acima da linha)
-                         (cons 1002 "}")))
+          (list -3 (append
+                     (list "ACAD" (cons 1000 "DSTYLE") (cons 1002 "{")
+                           (cons 1070 40) (cons 1040 (pok-k))  ; DIMSCALE
+                           (cons 1070 41) (cons 1040 0.2)      ; DIMASZ
+                           (cons 1070 42) (cons 1040 0.1)      ; DIMEXO
+                           (cons 1070 44) (cons 1040 0.1)      ; DIMEXE
+                           (cons 1070 140) (cons 1040 0.25)    ; DIMTXT
+                           (cons 1070 142) (cons 1040 0.1)     ; DIMTSZ (traço de arquitetura)
+                           (cons 1070 147) (cons 1040 0.1)     ; DIMGAP
+                           (cons 1070 77) (cons 1070 1))       ; DIMTAD (texto acima da linha)
+                     (if viva
+                       (list (cons 1070 144) (cons 1040 (/ 1.0 (pok-k)))  ; DIMLFAC
+                             (cons 1070 271) (cons 1070 2)                ; DIMDEC
+                             (cons 1070 278) (cons 1070 44)               ; DIMDSEP (a vírgula)
+                             (cons 1070 78) (cons 1070 0)                 ; DIMZIN
+                             (cons 1070 45) (cons 1040 0.0)               ; DIMRND
+                             (cons 1070 277) (cons 1070 2)                ; DIMLUNIT (decimal)
+                             (cons 1070 170) (cons 1070 0)))              ; DIMALT
+                     (list (cons 1002 "}"))))
     )
   )
 )
 
 ;; A mesma cota em LINE + TEXT, quando o AutoCAD não aceita a DIMENSION: a linha de cota, as chamadas (só quando
-;; a linha sai das pontas), um traço de 45° em cada ponta e a medida, como o bloco *D do DXF do site.
+;; a linha sai das pontas), um traço de 45° em cada ponta e a medida, como o bloco *D do DXF do site (0,1 m e a
+;; letra de 0,25 m, vezes k).
 (defun pok-cota-em-linhas (camada p1 p2 pl meio r txt / q1 desloca d alem ao traco linha)
   (setq desloca (pok-menos pl p2)
         q1 (pok-mais p1 desloca)
         d (distance p2 pl)
         ao (pok-vezes (pok-menos p2 p1) (/ 1.0 (distance p1 p2)))
-        traco (pok-vezes (list (- (car ao) (cadr ao)) (+ (cadr ao) (car ao)) 0.0) 0.1))
+        traco (pok-vezes (list (- (car ao) (cadr ao)) (+ (cadr ao) (car ao)) 0.0) (* 0.1 (pok-k))))
   (if (> d 1e-9)
     (progn
-      (setq alem (pok-vezes desloca (/ 0.1 d)))
+      (setq alem (pok-vezes desloca (/ (* 0.1 (pok-k)) d)))
       (pok-d-linha (list camada (car p1) (cadr p1) (car (pok-mais q1 alem)) (cadr (pok-mais q1 alem)) ""))
       (pok-d-linha (list camada (car p2) (cadr p2) (car (pok-mais pl alem)) (cadr (pok-mais pl alem)) ""))
     )
@@ -940,11 +1118,12 @@
     (pok-d-linha (list camada (car (pok-menos q traco)) (cadr (pok-menos q traco))
                        (car (pok-mais q traco)) (cadr (pok-mais q traco)) "")))
   (setq linha (pok-d-linha (list camada (car q1) (cadr q1) (car pl) (cadr pl) "")))
-  (if linha (pok-texto-desenho camada meio 0.25 txt r "centro"))
+  (if linha (pok-texto-desenho camada meio (* 0.25 (pok-k)) txt r "centro"))
 )
 
-;; a: (camada x1 y1 x2 y2 xl yl texto...). O texto fica 0,25 acima do meio da linha de cota, no sentido de leitura.
-(defun pok-d-cota (a / p1 p2 pl txt q1 r acima meio)
+;; a: (camada x1 y1 x2 y2 xl yl texto...). O texto fica 0,25 m (vezes k) acima do meio da linha de cota, no sentido
+;; de leitura. `viva`: a DIMENSION mostra a medida (pok-dimension).
+(defun pok-d-cota (a viva / p1 p2 pl txt q1 r acima meio)
   (setq txt (pok-juntar (cdddr (cddddr a))))
   (if (and (pok-nums-p (list (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a) (nth 5 a) (nth 6 a))) (/= txt ""))
     (progn
@@ -954,9 +1133,9 @@
           (setq q1 (pok-mais p1 (pok-menos pl p2))
                 r (pok-legivel (atan (- (cadr p2) (cadr p1)) (- (car p2) (car p1))))
                 acima (list (- (sin r)) (cos r) 0.0)
-                meio (pok-mais (pok-vezes (pok-mais q1 pl) 0.5) (pok-vezes acima 0.25)))
+                meio (pok-mais (pok-vezes (pok-mais q1 pl) 0.5) (pok-vezes acima (* 0.25 (pok-k)))))
           (cond
-            ((pok-dimension (car a) p1 p2 pl meio txt))
+            ((pok-dimension (car a) p1 p2 pl meio txt viva))
             ((pok-cota-em-linhas (car a) p1 p2 pl meio r txt) (setq cotas-em-linhas (1+ cotas-em-linhas)))
           )
         )
@@ -965,11 +1144,70 @@
   )
 )
 
+;; Os n primeiros da lista, e a lista sem eles.
+(defun pok-primeiros (l n / s)
+  (repeat n (setq s (cons (car l) s) l (cdr l)))
+  (reverse s)
+)
+(defun pok-sem-os-primeiros (l n)
+  (repeat n (setq l (cdr l)))
+  l
+)
+
+;; (n x y ... n x y ...) -> ((pontos do 1º contorno) (do 2º) ...), ou nil se algum contorno é torto (menos de 3
+;; vértices, número que falta ou que não é número).
+(defun pok-contornos (nums / n ok saida)
+  (setq ok T)
+  (while (and ok nums)
+    (setq n (car nums) nums (cdr nums))
+    (if (and (= (type n) 'INT) (>= n 3) (>= (length nums) (* 2 n)) (pok-nums-p (pok-primeiros nums (* 2 n))))
+      (setq saida (cons (pok-pares (pok-primeiros nums (* 2 n))) saida)
+            nums (pok-sem-os-primeiros nums (* 2 n)))
+      (setq ok nil)
+    )
+  )
+  (if ok (reverse saida))
+)
+
+;; a: (camada cor n x y ... n x y ...). HATCH SOLID por entmake (DXF Reference, HATCH): cada contorno uma polilinha
+;; fechada (92 = 7: externo, polilinha, derivado; 72 = 0 sem arco; 73 = 1 fechada; 93 vértices, 97 = 0 sem objeto
+;; associado), estilo normal (75 = 0: os contornos de dentro viram furo), 76 = 1 predefinido, uma semente.
+(defun pok-d-hachura (a / cor contornos)
+  (setq cor (nth 1 a) contornos (pok-contornos (cddr a)))
+  (if (and contornos (= (type cor) 'INT) (> cor 0) (<= cor 256))
+    (entmakex
+      (append
+        (list (cons 0 "HATCH") (cons 100 "AcDbEntity") (cons 8 (car a)) (cons 62 cor) (cons 100 "AcDbHatch")
+              (list 10 0.0 0.0 0.0) (list 210 0.0 0.0 1.0) (cons 2 "SOLID") (cons 70 1) (cons 71 0)
+              (cons 91 (length contornos)))
+        (apply 'append
+          (mapcar
+            '(lambda (pts)
+               (append (list (cons 92 7) (cons 72 0) (cons 73 1) (cons 93 (length pts)))
+                       (mapcar '(lambda (p) (cons 10 p)) pts)
+                       (list (cons 97 0))))
+            contornos))
+        (list (cons 75 0) (cons 76 1) (cons 98 1) (list 10 0.0 0.0 0.0))
+      )
+    )
+  )
+)
+
+;; ("insunits-se-vazio" u): o $INSUNITS do desenho vazio (nada no modelo fora da camada das marcas); T se gravou.
+(defun pok-gravar-insunits (u)
+  (if (and (member u '(4 5 6)) (not (pok-algo-no-modelo)))
+    (not (vl-catch-all-error-p (vl-catch-all-apply 'setvar (list "INSUNITS" u))))
+  )
+)
+
 ;; Um item já inteiro (com os "+" juntados). Os contadores são os locais do pok-desenhar (escopo dinâmico).
 (defun pok-desenhar-um (item / tipo a feito)
   (if (= (type item) 'LIST) (setq tipo (car item) a (cdr item)))
   (cond
-    ((= tipo "camada") (if (pok-camada-desenho (nth 0 a) (nth 1 a) (nth 2 a) (nth 3 a)) (setq camadas (1+ camadas))))
+    ((= tipo "unidade") (if (and (pok-num-p (car a)) (> (car a) 0)) (setq por-metro (float (car a)))))
+    ((= tipo "insunits-se-vazio") (if (pok-gravar-insunits (car a)) (setq insunits-gravado (car a))))
+    ((= tipo "camada")
+     (if (pok-camada-desenho (nth 0 a) (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a)) (setq camadas (1+ camadas))))
     ((= tipo "zoom")
      (if (setq a (pok-caixa-valida a))
        (command "_.ZOOM" "_W" (list (nth 0 a) (nth 1 a)) (list (nth 2 a) (nth 3 a)))))
@@ -981,7 +1219,9 @@
            ((= tipo "linha") (pok-d-linha a))
            ((= tipo "arco") (pok-d-arco a))
            ((= tipo "texto") (pok-d-texto a))
-           ((= tipo "cota") (pok-d-cota a))
+           ((= tipo "cota") (pok-d-cota a nil))
+           ((= tipo "cota-viva") (pok-d-cota a T))
+           ((= tipo "hachura") (pok-d-hachura a))
          )
        )
      )
@@ -1005,15 +1245,17 @@
 
 (defun pok-json-desenho (extra)
   (strcat "{\"ok\":true" extra ",\"criadas\":" (itoa criadas) ",\"ignoradas\":" (itoa ignoradas)
-          ",\"camadas\":" (itoa camadas) ",\"cotasEmLinhas\":" (itoa cotas-em-linhas) "}")
+          ",\"camadas\":" (itoa camadas) ",\"cotasEmLinhas\":" (itoa cotas-em-linhas)
+          (if insunits-gravado (strcat ",\"insunitsGravado\":" (itoa insunits-gravado)) "") "}")
 )
 
 ;; O desenho no espaço do modelo, num grupo de desfazer só. Nunca apaga nem altera entidade que já existe.
 ;; O CTAB muda antes do UNDO _Begin (protegido: se o AutoCAD não deixar, nada é desenhado e nenhum grupo fica aberto).
 ;; UNDOCTL: bit 1 = UNDO ligado, bit 2 = só um comando (o UNDO "One", sem Begin/End). Fora do UNDO completo, desenha
 ;; sem o grupo (o _Begin ficaria preso no prompt) e avisa com "semDesfazer":true.
-(defun pok-desenhar (saida itens / criadas ignoradas camadas cotas-em-linhas ss r u grupo sem-desfazer)
-  (setq criadas 0 ignoradas 0 camadas 0 cotas-em-linhas 0)
+(defun pok-desenhar (saida itens / criadas ignoradas camadas cotas-em-linhas ss r u grupo sem-desfazer por-metro
+                                    insunits-gravado)
+  (setq criadas 0 ignoradas 0 camadas 0 cotas-em-linhas 0 por-metro 1.0)
   (if (and (= (type (car itens)) 'LIST) (= (car (car itens)) "se-vazio"))
     (setq ss (if (= (type (cadr (car itens))) 'STR) (ssget "_X" (list (cons 8 (cadr (car itens))))))
           itens (cdr itens))
@@ -1046,6 +1288,77 @@
   )
 )
 
+;; ---------------------------------------------------------------- a unidade do desenho aberto (0.7.0)
+
+;; O que está no espaço do modelo fora da camada das marcas, ou nil: o desenho vazio. O nosso terreno e a nossa planta
+;; (PRANCHAOK-*) contam: um terreno em metros da 0.6.0 não é desenho vazio, e o $INSUNITS dele não vira mm.
+;; 410 = "Model" (o espaço do modelo, em qualquer língua); "~PRANCHAOK-PARECER" é o wcmatch de "tudo menos".
+(defun pok-algo-no-modelo ()
+  (ssget "_X" (list (cons 410 "Model") (cons 8 "~PRANCHAOK-PARECER")))
+)
+
+;; A mediana de uma lista de números (vl-sort-i guarda os repetidos; o vl-sort pode tirá-los), ou nil.
+(defun pok-mediana (nums / ordem n)
+  (if nums
+    (progn
+      (setq ordem (mapcar '(lambda (i) (nth i nums)) (vl-sort-i nums '<))
+            n (length ordem))
+      (if (= (rem n 2) 1)
+        (nth (/ n 2) ordem)
+        (/ (+ (nth (1- (/ n 2)) ordem) (nth (/ n 2) ordem)) 2.0)
+      )
+    )
+  )
+)
+
+;; Até 500 alturas dos TEXT e MTEXT do modelo fora das camadas PRANCHAOK-* (o 40 dos dois).
+(defun pok-alturas-dos-textos ( / ss i h alturas)
+  (if (setq ss (ssget "_X" (list (cons 0 "TEXT,MTEXT") (cons 410 "Model") (cons 8 "~PRANCHAOK-*"))))
+    (progn
+      (setq i 0)
+      (while (and (< i (sslength ss)) (< i 500))
+        (setq h (cdr (assoc 40 (entget (ssname ss i)))))
+        (if (and (pok-num-p h) (> h 0)) (setq alturas (cons (float h) alturas)))
+        (setq i (1+ i))
+      )
+    )
+  )
+  alturas
+)
+
+;; O pedaço do `info` que diz a unidade do desenho: $INSUNITS, LTSCALE, quantas entidades há no modelo fora da
+;; camada das marcas (0: vazio), a mediana da altura dos textos e o programa (PROGRAM "acad" no completo e "acadlt"
+;; no LT; PRODUCT "AutoCAD" e "AutoCAD LT").
+(defun pok-info-unidade ( / ss alturas programa)
+  (setq ss (pok-algo-no-modelo)
+        alturas (pok-alturas-dos-textos)
+        programa (getvar "PROGRAM"))
+  (strcat
+    ",\"insunits\":" (if (pok-num-p (getvar "INSUNITS")) (itoa (getvar "INSUNITS")) "null")
+    ",\"ltscale\":" (pok-jn (getvar "LTSCALE"))
+    ",\"entidadesNoModelo\":" (itoa (if ss (sslength ss) 0))
+    ",\"vazio\":" (pok-jbool (null ss))
+    ",\"alturaDosTextos\":" (pok-jn (pok-mediana alturas))
+    ",\"textosMedidos\":" (itoa (length alturas))
+    ",\"programa\":" (pok-js programa)
+    ",\"lt\":" (pok-jbool (or (and (= (type programa) 'STR) (wcmatch (strcase programa) "*LT"))
+                               (wcmatch (strcase (cond ((getvar "PRODUCT")) (t ""))) "* LT*")))
+  )
+)
+
+;; O nosso lote já desenhado: os vértices da 1ª polilinha da camada PRANCHAOK-LOTE no modelo, para o MCP achar a
+;; unidade e a origem do terreno que está lá (desenho.casar_lote). Sem ela, "pontos": null.
+(defun pok-lote (saida / ss ed)
+  (setq ss (ssget "_X" (list (cons 0 "LWPOLYLINE") (cons 8 "PRANCHAOK-LOTE") (cons 410 "Model"))))
+  (if ss (setq ed (entget (ssname ss 0))))
+  (write-line
+    (strcat "{\"ok\":true,\"lotes\":" (itoa (if ss (sslength ss) 0))
+            ",\"handle\":" (pok-js (if ed (cdr (assoc 5 ed))))
+            ",\"pontos\":" (if ed (pok-jlista (mapcar 'pok-jp (pok-pontos-de ed '(10)))) "null") "}")
+    saida
+  )
+)
+
 ;; ---------------------------------------------------------------- info e despacho
 
 (defun pok-info (saida / v)
@@ -1063,6 +1376,7 @@
       ",\"codificacao\":" (pok-js *pok-codificacao*)
       ",\"secureload\":" (itoa (getvar "SECURELOAD"))
       ",\"trustedpaths\":" (pok-js (getvar "TRUSTEDPATHS"))
+      (pok-info-unidade)
       ",\"vinculo\":"
       (if v
         (strcat "{\"projetoId\":" (pok-js (nth 0 v)) ",\"projeto\":" (pok-js (nth 1 v)) ",\"empresaId\":" (pok-js (nth 2 v)) "}")
@@ -1089,6 +1403,7 @@
     ((= comando "caixas") (pok-caixas saida args))
     ((= comando "chamadas") (pok-chamadas saida args))
     ((= comando "desenhar") (pok-desenhar saida args))
+    ((= comando "lote") (pok-lote saida))
     ((= comando "limpar") (pok-limpar saida))
     ((= comando "quadro") (pok-quadro saida (pok-juntar args)))
     ((= comando "salvar") (pok-salvar saida))

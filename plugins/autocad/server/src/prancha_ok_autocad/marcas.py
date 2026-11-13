@@ -14,9 +14,14 @@ Lugar de uma linha, nesta ordem (contrato, 4.2):
   2. os handles dos campos de que ele depende (origem do valor lido);
   3. a região com caixa (nuvem em volta da caixa) ou só com o título (nuvem em volta dele), e
      também cada um dos outros lugares achados no desenho (`outrasRegioes`);
-  4. nada: só o quadro-resumo. A região só com tipo e rótulo diz onde olhar, mas não é lugar.
+  4. nada: só o quadro-resumo (a pergunta, só o chat e o site: DAV-17). A região só com tipo e
+     rótulo diz onde olhar, mas não é lugar.
 No carimbo, no quadro de áreas e onde as nuvens se amontoariam, a marca é uma chamada com seta
-em vez da nuvem (0.3.4, chamadas.py).
+em vez da nuvem (0.3.4, chamadas.py). Desde a DAV-18 (call de 26/10/2026: "o texto ficou GIGANTE",
+"melhor os rótulos ficarem do lado de fora do desenho"), o LISP desenha só a nuvem; o rótulo de
+cada item vai numa coluna fora do desenho, com uma seta até a marca, na altura do texto comum do
+desenho (chamadas.py). O rótulo que ainda vai no pedido da nuvem (marca_do_handle,
+marcas_por_regiao) diz o que ela marca, mas não se desenha.
 
 Resposta do responsável na web (rodada 4b; a rota manda `marca` em cada item desde a 0.3.1 do
 backend, e o MCP antigo ignora): o item que ele conferiu ("sim"), contestou ("discordo") ou marcou
@@ -228,7 +233,8 @@ def _rotulo_curto(linha: Linha) -> str:
 
 
 def marca_do_handle(handle: str, linhas: list[Linha]) -> tuple[str, int, str]:
-    """(handle, cor, rótulo) da nuvem de um handle: os itens dele, com a cor do pior."""
+    """(handle, cor, rótulo) da nuvem de um handle: os itens dele, com a cor do pior. O rótulo vai no
+    pedido, mas o LISP não o desenha (DAV-18: o rótulo é o da coluna de fora, chamadas.py)."""
     return (handle, COR[pior(x.situacao for x in linhas)], "; ".join(_rotulo_curto(x) for x in linhas))
 
 
@@ -248,7 +254,8 @@ def chave_regiao(regiao: dict) -> tuple:
 
 def marcas_por_regiao(linhas: list[Linha]) -> tuple[list[tuple], list[dict]]:
     """Uma nuvem por região, com os itens dela: (handleTitulo, caixa, espaco, cor, rótulo) e,
-    na mesma ordem, {rotulo da região, itens: [números]}. O rótulo da nuvem começa pelos
+    na mesma ordem, {rotulo da região, itens: [números]}. O rótulo vai no pedido, mas o LISP não o
+    desenha (DAV-18: o de cada item é o da coluna de fora, chamadas.py). O rótulo da nuvem começa pelos
     números, que sobrevivem ao corte: "Planta de situação - itens 3, 7, 12 - [3] ERRO: ...".
     O item de mais de um lugar (rodada 5: "planta baixa e corte") entra na nuvem de cada um."""
     grupos: dict[tuple, tuple[str, list[Linha]]] = {}
@@ -294,6 +301,19 @@ def sobre_o_projeto(grupo: dict) -> bool:
     return "não se aplica" not in grupo["opcoes"]
 
 
+def perguntas_para_o_chat(linhas: list[Linha], rotulos: dict) -> dict | None:
+    """As perguntas abertas para o retorno do marcar_parecer (DAV-17, call de 26/10/2026: elas
+    saíram do quadro-resumo e ficam no chat e no site). Como em ver_parecer: as do projeto
+    primeiro, as de documento à parte. Sem pergunta, None."""
+    abertas = perguntas_abertas(linhas, rotulos)
+    if not abertas:
+        return None
+    return {"abertas": [g for g in abertas if sobre_o_projeto(g)],
+            "sobreDocumentos": [g for g in abertas if not sobre_o_projeto(g)],
+            "comoResponder": "responder_itens com {campo: resposta}, a resposta uma das opcoes da pergunta "
+                             "(\"sim\", \"não\" ou \"não se aplica\"), só a que a pessoa der."}
+
+
 def agrupar_duvidas(linhas: list[Linha]) -> list[Linha | tuple[str, list[Linha]]]:
     """Dúvidas que esperam o mesmo dado viram um grupo (como a aba Dúvidas da web,
     lib/agruparDuvidas.ts): cada dúvida vai para o campo que mais dúvidas pedem; grupo com uma
@@ -336,11 +356,13 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
                   chamadas: frozenset[int] | set[int] = frozenset()) -> list[str]:
     """Linhas do quadro-resumo (uma por parágrafo do MTEXT). Erros vão todos; dúvidas também,
     mas as que esperam o mesmo dado numa linha só ("falta: Pé-direito...: itens 3, 7, 12");
-    "(nuvem)" nos que ganharam nuvem e "(chamada)" nos que só ganharam chamada (`chamadas`, 0.3.4:
-    o rótulo da chamada não tem o título, então o conferir à mão com chamada também vem aqui). As perguntas sobre o projeto vão uma por resposta, e as sobre
-    documentos numa linha (respondem-se no Prancha Ok); conferir à mão, só os sem nuvem, com onde
-    olhar. Se não cabe, corta-se primeiro o conferir à mão e depois as dúvidas: as perguntas
-    nunca (revisão do especialista, rodada 2: "o quadro-resumo não pode cortar as perguntas").
+    "(nuvem)" nos que ganharam nuvem e "(chamada)" nos que só ganharam a seta direta, sem nuvem
+    (`chamadas`: carimbo, quadro de áreas, amontoado); conferir à mão, só os sem nuvem (também os
+    só com a seta direta), com onde olhar. Desde a DAV-18 todo item marcado tem também o rótulo
+    "[nº] SITUAÇÃO: título" na coluna fora do desenho (chamadas.py). As perguntas não têm parte no quadro
+    (DAV-17, call de 26/10/2026: ficam no chat e no site, perguntas_para_o_chat); o cabeçalho só
+    diz quantos itens esperam resposta, e a pergunta com lugar continua com a nuvem magenta. Se
+    não cabe, corta-se primeiro o conferir à mão, depois as dúvidas, depois os erros.
     O texto vai como está: autocad.quadro tira o que o MTEXT interpretaria e passa o resto para
     ASCII (pedido.py)."""
     rotulos = p.get("rotulos") or {}
@@ -358,8 +380,8 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
     else:
         cabecalho.append(f"{com_nuvem} de {len(linhas)} itens com nuvem no desenho; os outros estão aqui")
     if perguntas:
-        cabecalho.append(f"{sum(len(g['itens']) for g in perguntas)} itens esperam resposta: responda no "
-                         "Prancha Ok ou pelo assistente")
+        cabecalho.append(f"{sum(len(g['itens']) for g in perguntas)} itens esperam resposta e ficam fora deste "
+                         "quadro: responda pelo assistente ou no Prancha Ok")
     cabecalho.append("")
 
     def nuvem(linha: Linha) -> str:
@@ -384,26 +406,17 @@ def linhas_quadro(p: dict, linhas: list[Linha], marcados: set[int], situacao_par
         com = [str(x.numero) for x in grupo if x.numero in marcados]
         duvidas.append(_cortar(f"- falta {rotulos.get(campo, campo)}: itens {numeros}"
                                + (f" (nuvem em {', '.join(com)})" if com else ""), MAXIMO_TEXTO_QUADRO + 40))
-    projeto = [g for g in perguntas if sobre_o_projeto(g)]
-    documentos = [g for g in perguntas if not sobre_o_projeto(g)]
-    linhas_perguntas = [f"- {_cortar(g['pergunta'])} ({'/'.join(g['opcoes'])}; {len(g['itens'])} "
-                        f"{'item' if len(g['itens']) == 1 else 'itens'})" for g in projeto]
-    if documentos:
-        n = len(documentos)
-        linhas_perguntas.append(f"- {n} {'pergunta' if n == 1 else 'perguntas'} sobre documentos do processo (RGI, "
-                                "ART, taxas...): responda no Prancha Ok")
     conferir = [item(x, x.titulo) for x in linhas
                 if x.situacao == "conferir_a_mao" and (x.numero not in marcados or x.numero in chamadas)]
 
-    secoes = [["EM DESACORDO", erros], ["DÚVIDAS", duvidas], ["PERGUNTAS", linhas_perguntas],
-              ["CONFERIR À MÃO (sem nuvem)", conferir]]
+    secoes = [["EM DESACORDO", erros], ["DÚVIDAS", duvidas], ["CONFERIR À MÃO (sem nuvem)", conferir]]
 
     def tamanho() -> int:
         return sum(1 + len(corpo) for _, corpo in secoes if corpo)
 
     cabe = MAXIMO_LINHAS_QUADRO - len(cabecalho)
-    # Corta o conferir à mão, depois as dúvidas, depois os erros; as perguntas ficam.
-    for indice in (3, 1, 0):
+    # Corta o conferir à mão, depois as dúvidas, depois os erros.
+    for indice in (2, 1, 0):
         titulo, corpo = secoes[indice]
         excesso = tamanho() - cabe
         if excesso <= 0:

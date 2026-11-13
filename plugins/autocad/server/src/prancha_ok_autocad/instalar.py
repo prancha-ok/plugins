@@ -130,8 +130,13 @@ def instalar() -> int:
     if sys.platform != "win32":
         print("O MCP do Prancha Ok para AutoCAD roda no Windows.")
         return 1
-    preparar()
+    feito = preparar(desenho_pro=True)
     print(f"LISP do Prancha Ok em {pasta_lisp() / 'prancha_ok.lsp'}")
+    pro = feito["desenhoPro"]
+    if pro["estado"] == "pronto":
+        print(f"Desenho profissional (autocad-mcp-pro) instalado em {pro['pasta']}.")
+    else:  # não impede o resto: o conector funciona sem ele (a planta sai no desenho do Prancha Ok)
+        print(f"Desenho profissional não instalado: {pro.get('erro') or pro.get('motivo')}")
     alvo = str(pasta_lisp())
     if _autocad_aberto():
         lido = _trustedpaths_pelo_autocad(alvo, incluir=True)

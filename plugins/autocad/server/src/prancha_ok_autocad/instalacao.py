@@ -15,8 +15,9 @@ e cada passo é idempotente (rodar de novo não muda nada):
    AutoCAD guarda o TRUSTEDPATHS no perfil ao fechar. As outras pastas confiáveis do
    escritório ficam como estão.
 
-O comando `instalar` continua: faz o passo 1 e, com o AutoCAD fechado e fora do MSIX,
-grava a pasta no registro (instalar.py).
+O comando `instalar` continua: faz o passo 1, instala o ambiente do desenho profissional
+em primeiro plano (o servidor o faz em segundo plano ao subir; `preparar_desenho_pro`) e,
+com o AutoCAD fechado e fora do MSIX, grava a pasta no registro (instalar.py).
 """
 from __future__ import annotations
 
@@ -26,19 +27,42 @@ import time
 from pathlib import Path, PureWindowsPath
 
 from . import __version__
-from .locais import atualizar_lisp, gravar_estado, ler_estado, pasta_ipc, pasta_lisp
+from .locais import atualizar_estado, atualizar_lisp, gravar_estado, ler_estado, pasta_ipc, pasta_lisp
 from .pedido import lisp
 
 
-def preparar() -> dict:
+def preparar(desenho_pro: bool = False) -> dict:
     """Passo 1. Devolve o que fez: {versao, anterior, lispCopiado}. Não escreve na saída
-    padrão (no servidor MCP ela é o canal com o assistente)."""
+    padrão (no servidor MCP ela é o canal com o assistente). `desenho_pro` (o comando
+    `instalar`): depois do LISP, o ambiente do desenho profissional em primeiro plano, no
+    campo `desenhoPro` (o que falhou nele fica lá, nunca desfaz nem impede o LISP)."""
     copiado = atualizar_lisp()
     pasta_ipc()
     anterior = (ler_estado().get("instalacao") or {}).get("versao")
     if anterior != __version__:
         gravar_estado(instalacao={"versao": __version__, "anterior": anterior})
-    return {"versao": __version__, "anterior": anterior, "lispCopiado": copiado}
+    feito = {"versao": __version__, "anterior": anterior, "lispCopiado": copiado}
+    if desenho_pro:
+        feito["desenhoPro"] = preparar_desenho_pro()
+    return feito
+
+
+def preparar_desenho_pro() -> dict:
+    """O ambiente do desenho profissional (o autocad-mcp-pro em desenho_pro/, `uv sync`; a 1ª vez baixa ~50 MB) em
+    primeiro plano. Nunca levanta: {estado, pasta} com estado "pronto" ou "falhou" (com o `erro`: sem o uv, sem rede),
+    ou {estado, motivo} sem instalar nada: "desligado" (PRANCHA_OK_DESENHO_PRO=0) e "indisponivel" (fora do Windows)."""
+    from . import ponte  # aqui dentro: o autocad importa este módulo, e a ponte usa o autocad
+
+    if motivo := ponte.motivo_indisponivel():
+        return {"estado": "desligado" if motivo == ponte.MSG_DESLIGADO else "indisponivel", "motivo": motivo}
+    try:
+        p = ponte.obter()
+        estado = p.preparar()
+        erro = p.situacao()["erroAmbiente"]
+        pasta_do_ambiente = str(p.c.pasta_ambiente)
+    except Exception as e:  # noqa: BLE001 - o motivo vai no resultado; o LISP já está instalado
+        return {"estado": "falhou", "erro": f"A instalação do desenho profissional falhou: {e}"}
+    return {"estado": estado, "pasta": pasta_do_ambiente, **({"erro": erro} if estado != "pronto" else {})}
 
 
 # A pasta deste servidor (a do pacote): a extensão do Claude Desktop e um registro manual rodam de pastas diferentes.
@@ -72,10 +96,13 @@ def _vivo(pid: int) -> bool:
 
 def registrar_servidor(origem: str = ORIGEM, pid: int | None = None) -> None:
     """Anota em estado.json este servidor (pasta, versão e processo) e tira os que já terminaram."""
-    servidores = {o: s for o, s in (ler_estado().get("servidores") or {}).items()
-                  if isinstance(s, dict) and _vivo(int(s.get("pid") or 0))}
-    servidores[origem] = {"versao": __version__, "pid": pid or os.getpid(), "inicio": time.time()}
-    gravar_estado(servidores=servidores)
+    def mudar(estado: dict) -> None:
+        servidores = {o: s for o, s in (estado.get("servidores") or {}).items()
+                      if isinstance(s, dict) and _vivo(int(s.get("pid") or 0))}
+        servidores[origem] = {"versao": __version__, "pid": pid or os.getpid(), "inicio": time.time()}
+        estado["servidores"] = servidores
+
+    atualizar_estado(mudar)
 
 
 def outros_servidores(origem: str = ORIGEM) -> list[dict]:

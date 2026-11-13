@@ -104,7 +104,11 @@ def terreno_do_zero(projeto_id: str) -> dict:
 def planta(projeto_id: str, programa: dict) -> dict:
     """A planta baixa gerada pelo programa da casa (0.6.0, projeto do zero): o Prancha Ok desenha e confere o que
     desenhou. {desenho: {unidade: "m", camadas, entidades, extensao, escala, comodos, avisos} (no sistema do terreno
-    desenhado), conferencia: {problemas: [{tipo, texto}], comodosLidos: [{nome, areaM2}], areaConstruidaM2, toPct, ca}}.
+    desenhado), conferencia: {problemas: [{tipo, texto}], comodosLidos: [{nome, areaM2}], areaConstruidaM2, toPct, ca}}
+    e, da 0.7.0, desenhoPro: {versao: "autocad-mcp-pro 1.6.0", unidade: "mm", spec (o do arch_plan_from_spec),
+    complementos: {unidade: "mm", camadas, entidades, escala, extensao}}, os dois em mm no PLANO LOCAL do lote (o
+    conector soma a origem do desenho). Se a rota trouxer também `lote` (plano local) e `origemDoPlano`, o conector não
+    pede o terreno de novo para achar a unidade e a origem do desenho aberto.
     422 PROGRAMA_IMPOSSIVEL com os `erros`; 409 TERRENO_DO_ZERO_INDISPONIVEL ou PLANTA_NA_LEGALIZACAO com o `motivo`."""
     return _autenticado("POST", f"/cliente/v1/projetos/{quote(projeto_id, safe='')}/planta",
                         json={"programa": programa})

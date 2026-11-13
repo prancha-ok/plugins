@@ -1,6 +1,6 @@
 {
   "name": "autocad",
-  "version": "0.6.0",
+  "version": "0.7.2",
   "description": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção.",
   "author": {
     "name": "Prancha Ok",
@@ -30,7 +30,7 @@
   "interface": {
     "displayName": "Prancha Ok para AutoCAD",
     "shortDescription": "Parecer do Prancha Ok marcado no desenho do AutoCAD",
-    "longDescription": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção. Nunca altera o que o arquiteto desenhou.",
+    "longDescription": "Envia a prancha aberta no AutoCAD ao Prancha Ok, traz o parecer e marca no desenho, com nuvens numeradas, o que pede atenção. No AutoCAD completo, traz o desenho profissional (autocad-mcp-pro, MIT), que pede o seu sim antes de mudar o que você desenhou.",
     "developerName": "Prancha Ok",
     "category": "Productivity",
     "websiteURL": "https://pranchaok.com.br/autocad",

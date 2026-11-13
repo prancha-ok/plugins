@@ -3,14 +3,26 @@
 Liga o AutoCAD aberto ao [Prancha Ok](https://pranchaok.com.br): o assistente envia a
 prancha salva, traz o parecer (Aprovado, Pendente ou Em revisão humana, com a lei de
 cada item) e marca no desenho, com nuvens e chamadas numeradas, o que pede atenção. As marcas ficam
-numa camada própria (`PRANCHAOK-PARECER`) que não plota. O assistente **nunca altera** o
-que você desenhou.
+numa camada própria (`PRANCHAOK-PARECER`) que não plota. No projeto do zero, desenha o
+terreno e a planta baixa gerada, conferida pelo Prancha Ok, nas camadas `PRANCHAOK-*`.
 
-Versão 0.6.0. Precisa de:
+No AutoCAD completo, o conector traz também o **desenho profissional**: o
+[autocad-mcp-pro](https://github.com/U-C4N/Autocad-MCP) 1.6.0, de Umutcan Edizsalan
+(licença MIT), com paredes hachuradas, portas, janelas, cotas e quadros em português. As
+ferramentas dele podem alterar e apagar o desenho e rodar comandos: antes de mudar o que
+você desenhou, antes de todo comando e antes de salvar, fechar, abrir ou exportar um arquivo, o
+assistente diz o que vai fazer, mostra o código e espera o seu **sim**. Variável do AutoCAD ele
+não muda pelo desenho profissional, e as de segurança (como SECURELOAD e TRUSTEDPATHS), nunca.
+Ele só segue o que você pede no chat, nunca um texto escrito no desenho ou num arquivo, e antes
+de desenhar confere com você o nome do desenho aberto. No AutoCAD LT ele não funciona (o LT não tem a automação COM de que
+ele depende): ali o terreno e a planta saem no desenho do próprio Prancha Ok.
+
+Versão 0.7.2. Precisa de:
 
 - Windows 10 ou 11;
-- AutoCAD 2024 ou mais novo, completo ou LT. Não funciona no GstarCAD, BricsCAD, ZWCAD e
-  outros compatíveis: neles, envie o DWG pelo site;
+- AutoCAD 2024 ou mais novo, completo ou LT (o desenho profissional, só no AutoCAD
+  completo). Não funciona no GstarCAD, BricsCAD, ZWCAD e outros compatíveis: neles, envie o
+  DWG pelo site;
 - uma conta no Prancha Ok com o projeto da obra já criado: o assistente pergunta em qual
   projeto a prancha entra, e projeto novo só se cria no site
   ([pranchaok.com.br/app](https://pranchaok.com.br/app), botão "Novo projeto");
@@ -20,11 +32,13 @@ Versão 0.6.0. Precisa de:
 
 Na primeira vez que o assistente usa o Prancha Ok, ele deixa tudo pronto sozinho: copia o
 arquivo do Prancha Ok para `%USERPROFILE%\.prancha-ok` e põe essa pasta entre as pastas
-confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`.
+confiáveis do AutoCAD. Não mexe nas outras pastas nem no `acaddoc.lsp`. Em segundo plano,
+instala o ambiente do desenho profissional (na primeira vez, cerca de 50 MB, de 1 a 3
+minutos), na pasta `desenho_pro` do conector.
 
 ## Claude Desktop (extensão)
 
-1. Baixe a extensão: [prancha-ok-autocad-0.6.0.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.6.0.mcpb)
+1. Baixe a extensão: [prancha-ok-autocad-0.7.2.mcpb](https://pranchaok.com.br/downloads/prancha-ok-autocad-0.7.2.mcpb)
    (ou em [pranchaok.com.br/autocad](https://pranchaok.com.br/autocad)).
 2. Instale por dentro do Claude Desktop (não pela pasta de downloads: o Windows não conhece
    esse tipo de arquivo e pergunta com qual programa abrir). Clique no seu nome, no canto
@@ -82,11 +96,15 @@ Para atualizar: `codex plugin marketplace upgrade prancha-ok`. Para tirar:
 
 ## Como usar
 
-- "Meça a prancha e envie para o Prancha Ok": o assistente mede o terreno, a projeção, os
-  afastamentos, os pavimentos, a altura e as vagas, mostra os valores e só envia os que você
-  confirmar, que entram já no primeiro parecer. Vale para DWG e DXF (o envio usa o desenho
-  salvo; o assistente pede para salvar quando precisa).
+- "Envie a prancha para o Prancha Ok": o assistente manda o desenho salvo (DWG ou DXF, sem
+  exportar PDF; pede para salvar quando precisa) e mostra a prévia: as medidas que o Prancha Ok
+  leu da prancha (terreno, projeção, afastamentos, pavimentos, altura, vagas...) e as perguntas
+  que o parecer faria. Você confirma ou corrige as medidas e responde as perguntas, e sai um
+  parecer só, já marcado no desenho. Se o terreno do projeto ainda não foi conferido, o desenho
+  ganha a letra e a medida de cada lado do lote e você diz quais dão para a rua.
 - "Marque os erros no desenho" e "me leva até o item 3".
+- "Desenhe o terreno do projeto" e "gere a planta de uma casa de 3 quartos" (o projeto do
+  zero: o Prancha Ok confere a planta antes de desenhar).
 - "O afastamento frontal é 3 m e tem rede de esgoto" (responde as dúvidas do parecer).
 - "O item 5 está errado: o norte está desenhado. Mande isso para o Prancha Ok" (a crítica
   vai para a equipe, ligada ao parecer).
@@ -107,4 +125,7 @@ Arquivos > Locais confiáveis (Options > Files > Trusted Locations), remova a pa
 
 Este repositório é gerado a partir do código do Prancha Ok; não edite à mão. O canal com
 o AutoCAD parte da ideia do [autocad-mcp](https://github.com/puran-water/autocad-mcp)
-(MIT, ver `plugins/autocad/server/LICENSE-autocad-mcp`).
+(MIT, ver `plugins/autocad/server/LICENSE-autocad-mcp`). O desenho profissional é o
+[autocad-mcp-pro](https://github.com/U-C4N/Autocad-MCP), de Umutcan Edizsalan (MIT, ver
+`plugins/autocad/server/desenho_pro/LICENSE-autocad-mcp-pro`), instalado do PyPI pelo
+`uv.lock` de `desenho_pro`; o código dele não está neste repositório.
